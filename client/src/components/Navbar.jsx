@@ -1,5 +1,6 @@
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import NotificationBell from './NotificationBell';
 
 function Brand() {
   return (
@@ -21,6 +22,7 @@ export default function Navbar() {
       <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
         <Brand />
         <div className="flex items-center gap-4">
+          {user && <NotificationBell />}
           {user && <p className="hidden md:block text-slate-500">{user.email}</p>}
           {user ? (
             <button

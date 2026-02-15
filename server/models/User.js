@@ -17,6 +17,10 @@ const userSchema = new mongoose.Schema(
     password: { type: String, required: true },
     phone: { type: String, required: true },
     interests: { type: interestSchema, default: {} },
+    education: { type: String, default: '' },
+    workDomain: { type: String, default: '' },
+    bio: { type: String, default: '' },
+    travelFrequency: { type: Number, min: 0, default: 0 },
   },
   { timestamps: true }
 );

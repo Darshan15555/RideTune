@@ -18,7 +18,7 @@ export default function Requests() {
   }, []);
 
   const updateStatus = async (id, status) => {
-    await api.patch(`/requests/${id}/status`, { status });
+    await api.put(`/requests/${id}/${status}`);
     await load();
   };
 
@@ -52,10 +52,16 @@ export default function Requests() {
                 {tab === 'sent' && <p className="font-semibold">Request for {entry.ride?.startLocation?.name} → {entry.ride?.endLocation?.name}</p>}
                 <p className="mt-2">Status: <b className="capitalize">{entry.status}</b></p>
                 {entry.contact && <p>Contact: {entry.contact}</p>}
+                {entry.status === 'accepted' && entry.roomId && (
+                  <div className="flex gap-2 mt-3">
+                    <Link className="px-3 py-1 rounded-full bg-indigo-600 text-white" to={`/chat?roomId=${entry.roomId}`}>Open Chat</Link>
+                    <Link className="px-3 py-1 rounded-full bg-cyan-600 text-white" to={`/live-ride?sessionId=${entry.sessionId}`}>Live Tracking</Link>
+                  </div>
+                )}
                 {tab === 'received' && entry.status === 'pending' && (
                   <div className="space-x-2 mt-3">
-                    <button className="px-4 py-2 rounded-full bg-green-600 text-white" onClick={() => updateStatus(entry._id, 'accepted')}>Accept</button>
-                    <button className="px-4 py-2 rounded-full bg-red-600 text-white" onClick={() => updateStatus(entry._id, 'rejected')}>Reject</button>
+                    <button className="px-4 py-2 rounded-full bg-green-600 text-white" onClick={() => updateStatus(entry._id, 'accept')}>Accept</button>
+                    <button className="px-4 py-2 rounded-full bg-red-600 text-white" onClick={() => updateStatus(entry._id, 'reject')}>Reject</button>
                   </div>
                 )}
               </div>

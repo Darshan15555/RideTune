@@ -7,6 +7,8 @@ import Dashboard from './pages/Dashboard';
 import PostRide from './pages/PostRide';
 import SearchRide from './pages/SearchRide';
 import Requests from './pages/Requests';
+import LiveRide from './pages/LiveRide';
+import ChatPage from './pages/ChatPage';
 
 function PrivateRoute({ children }) {
   const { user } = useAuth();
@@ -23,6 +25,8 @@ export default function App() {
         <Route path="/post-ride" element={<PrivateRoute><PostRide /></PrivateRoute>} />
         <Route path="/search-ride" element={<PrivateRoute><SearchRide /></PrivateRoute>} />
         <Route path="/requests" element={<PrivateRoute><Requests /></PrivateRoute>} />
+        <Route path="/live-ride" element={<PrivateRoute><LiveRide /></PrivateRoute>} />
+        <Route path="/chat" element={<PrivateRoute><ChatPage /></PrivateRoute>} />
       </Route>
     </Routes>
   );

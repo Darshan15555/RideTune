@@ -2,12 +2,21 @@ import express from 'express';
 import authMiddleware from '../middleware/authMiddleware.js';
 import Request from '../models/Request.js';
 import Ride from '../models/Ride.js';
+import RideSession from '../models/RideSession.js';
+import Message from '../models/Message.js';
+import { isValidObjectId, validateObjectIdParam } from '../middleware/validateObjectId.js';
 
 const router = express.Router();
+
+const buildRoomId = ({ rideId, driverId, passengerId }) => `${rideId}:${driverId}:${passengerId}`;
 
 router.post('/', authMiddleware, async (req, res) => {
   try {
     const { rideId } = req.body;
+    if (!isValidObjectId(rideId)) {
+      return res.status(400).json({ message: 'Invalid rideId' });
+    }
+
     const ride = await Ride.findById(rideId);
 
     if (!ride) {
@@ -24,6 +33,8 @@ router.post('/', authMiddleware, async (req, res) => {
       driver: ride.driver,
     });
 
+    await req.app.locals.notify?.(ride.driver, 'request', 'You received a new ride request.');
+
     return res.status(201).json(request);
   } catch (error) {
     if (error.code === 11000) {
@@ -38,10 +49,13 @@ router.get('/sent', authMiddleware, async (req, res) => {
     .populate({ path: 'ride', populate: { path: 'driver', select: 'name email phone' } })
     .sort({ createdAt: -1 });
 
-  const payload = sent.map((entry) => {
-    const contact = entry.status === 'accepted' ? entry.ride.driver.phone : null;
-    return { ...entry.toObject(), contact };
-  });
+  const payload = await Promise.all(
+    sent.map(async (entry) => {
+      const session = await RideSession.findOne({ request: entry._id }).select('roomId _id');
+      const contact = entry.status === 'accepted' ? entry.ride.driver.phone : null;
+      return { ...entry.toObject(), contact, roomId: session?.roomId || null, sessionId: session?._id || null };
+    })
+  );
 
   return res.json(payload);
 });
@@ -52,29 +66,86 @@ router.get('/received', authMiddleware, async (req, res) => {
     .populate('ride')
     .sort({ createdAt: -1 });
 
-  const payload = received.map((entry) => {
-    const contact = entry.status === 'accepted' ? entry.passenger.phone : null;
-    return { ...entry.toObject(), contact };
-  });
+  const payload = await Promise.all(
+    received.map(async (entry) => {
+      const session = await RideSession.findOne({ request: entry._id }).select('roomId _id');
+      const contact = entry.status === 'accepted' ? entry.passenger.phone : null;
+      return { ...entry.toObject(), contact, roomId: session?.roomId || null, sessionId: session?._id || null };
+    })
+  );
 
   return res.json(payload);
 });
 
-router.patch('/:id/status', authMiddleware, async (req, res) => {
-  const { status } = req.body;
-  if (!['accepted', 'rejected'].includes(status)) {
-    return res.status(400).json({ message: 'Status must be accepted or rejected' });
+router.put('/:id/accept', authMiddleware, validateObjectIdParam('id'), async (req, res) => {
+  const request = await Request.findOne({ _id: req.params.id, driver: req.user.id }).populate('ride');
+  if (!request) {
+    return res.status(404).json({ message: 'Request not found' });
   }
 
+  if (request.status !== 'pending') {
+    return res.status(400).json({ message: `Request already ${request.status}` });
+  }
+
+  request.status = 'accepted';
+  await request.save();
+
+  const roomId = buildRoomId({ rideId: request.ride._id, driverId: request.driver, passengerId: request.passenger });
+  const session = await RideSession.findOneAndUpdate(
+    { request: request._id },
+    {
+      ride: request.ride._id,
+      driver: request.driver,
+      passenger: request.passenger,
+      request: request._id,
+      roomId,
+      status: 'active',
+    },
+    { upsert: true, new: true }
+  );
+
+  await req.app.locals.notify?.(request.passenger, 'accepted', 'Your ride request was accepted.');
+  req.app.locals.io?.to(`user:${String(request.passenger)}`).emit('request-accepted', {
+    requestId: request._id,
+    sessionId: session._id,
+    roomId,
+  });
+
+  return res.json({ request, session });
+});
+
+router.put('/:id/reject', authMiddleware, validateObjectIdParam('id'), async (req, res) => {
   const request = await Request.findOne({ _id: req.params.id, driver: req.user.id });
   if (!request) {
     return res.status(404).json({ message: 'Request not found' });
   }
 
-  request.status = status;
+  if (request.status !== 'pending') {
+    return res.status(400).json({ message: `Request already ${request.status}` });
+  }
+
+  request.status = 'rejected';
   await request.save();
 
+  await req.app.locals.notify?.(request.passenger, 'rejected', 'Your ride request was rejected.');
+
   return res.json(request);
+});
+
+router.get('/messages/:roomId', authMiddleware, async (req, res) => {
+  const { roomId } = req.params;
+
+  const session = await RideSession.findOne({
+    roomId,
+    $or: [{ driver: req.user.id }, { passenger: req.user.id }],
+  });
+
+  if (!session) {
+    return res.status(403).json({ message: 'Not allowed to read this chat' });
+  }
+
+  const messages = await Message.find({ roomId }).sort({ timestamp: 1 });
+  return res.json(messages);
 });
 
 export default router;

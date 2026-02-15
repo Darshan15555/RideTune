@@ -1,5 +1,6 @@
-import { createContext, useContext, useMemo, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import api from '../services/api';
+import { connectSocket, disconnectSocket } from '../services/socket';
 
 const AuthContext = createContext(null);
 
@@ -13,6 +14,15 @@ export function AuthProvider({ children }) {
     const raw = localStorage.getItem('user');
     return raw ? JSON.parse(raw) : null;
   });
+
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (user && token) {
+      connectSocket(token);
+    } else {
+      disconnectSocket();
+    }
+  }, [user]);
 
   const login = async (email, password) => {
     const { data } = await api.post('/auth/login', { email, password });

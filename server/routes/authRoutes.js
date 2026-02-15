@@ -11,6 +11,10 @@ const toPublicUser = (user) => ({
   email: user.email,
   phone: user.phone,
   interests: user.interests,
+  education: user.education,
+  workDomain: user.workDomain,
+  bio: user.bio,
+  travelFrequency: user.travelFrequency,
 });
 
 const buildToken = (id) => jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: '7d' });
@@ -21,7 +25,7 @@ router.post('/register', async (req, res) => {
       return res.status(500).json({ message: 'Server misconfiguration: missing JWT_SECRET' });
     }
 
-    const { name, email, password, phone, interests = {} } = req.body;
+    const { name, email, password, phone, interests = {}, education = '', workDomain = '', bio = '', travelFrequency = 0 } = req.body;
 
     const normalized = {
       name: typeof name === 'string' ? name.trim() : '',
@@ -50,6 +54,10 @@ router.post('/register', async (req, res) => {
       password: hashedPassword,
       phone: normalized.phone,
       interests,
+      education,
+      workDomain,
+      bio,
+      travelFrequency,
     });
 
     const token = buildToken(user._id);

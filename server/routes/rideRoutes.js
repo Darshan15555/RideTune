@@ -45,16 +45,13 @@ router.post('/search', authMiddleware, async (req, res) => {
           $maxDistance: DEFAULT_NEAR_DISTANCE_METERS,
         },
       },
-    }).populate('driver', 'name email phone interests');
+    }).populate('driver', 'name email phone interests education workDomain bio travelFrequency');
 
     const withCompatibility = rides
-      .map((ride) => {
-        const compatibility = calculateCompatibility(requester.interests, ride.driver.interests);
-        return {
-          ...ride.toObject(),
-          compatibility,
-        };
-      })
+      .map((ride) => ({
+        ...ride.toObject(),
+        compatibility: calculateCompatibility(requester, ride.driver),
+      }))
       .sort((a, b) => b.compatibility - a.compatibility);
 
     return res.json(withCompatibility);
