@@ -44,7 +44,7 @@ npm run dev
 
 ## Auth Troubleshooting
 - Ensure backend is running on `http://localhost:5000` before login/register.
-- Ensure frontend has `VITE_API_URL=http://localhost:5000/api` in `client/.env`.
+- Ensure frontend has `VITE_API_URL=http://localhost:5000` or `http://localhost:5000/api` in `client/.env` (both now work).
 - Ensure backend `.env` has a valid `JWT_SECRET`; missing secret will fail auth routes.
 - If using `127.0.0.1:5173` in browser, backend CORS now allows both `localhost` and `127.0.0.1`.
 

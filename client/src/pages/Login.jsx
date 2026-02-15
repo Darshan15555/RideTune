@@ -2,6 +2,26 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
+function parseAuthError(error) {
+  if (!error?.response) {
+    return 'Unable to reach server. Please ensure backend is running and VITE_API_URL is correct.';
+  }
+
+  const { status, data } = error.response;
+  const apiMessage = data?.message || (typeof data === 'string' ? data : '');
+  if (apiMessage) return apiMessage;
+
+  if (status === 404) {
+    return 'Auth API route not found. Check VITE_API_URL (it should point to backend base URL).';
+  }
+
+  if (status >= 500) {
+    return 'Server error during authentication. Check backend terminal logs.';
+  }
+
+  return 'Authentication failed';
+}
+
 export default function Login() {
   const [isRegister, setIsRegister] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -17,8 +37,10 @@ export default function Login() {
       setIsSubmitting(true);
       if (isRegister) {
         await register({
-          ...form,
+          name: form.name.trim(),
+          phone: form.phone.trim(),
           email: form.email.trim().toLowerCase(),
+          password: form.password,
           interests: {},
         });
       } else {
@@ -26,11 +48,7 @@ export default function Login() {
       }
       navigate('/dashboard');
     } catch (e) {
-      if (!e.response) {
-        setError('Unable to reach server. Please ensure backend is running and VITE_API_URL is correct.');
-      } else {
-        setError(e.response?.data?.message || 'Authentication failed');
-      }
+      setError(parseAuthError(e));
     } finally {
       setIsSubmitting(false);
     }
