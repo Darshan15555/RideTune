@@ -1,11 +1,14 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../services/api';
+import LocationPicker from '../components/LocationPicker';
 
 const initialForm = {
-  startName: '', startLatitude: '', startLongitude: '',
-  endName: '', endLatitude: '', endLongitude: '',
-  dateTime: '', vehicleType: 'Car', seatsAvailable: 1,
+  startLocation: null,
+  endLocation: null,
+  dateTime: '',
+  vehicleType: 'Car',
+  seatsAvailable: 1,
 };
 
 export default function PostRide() {
@@ -14,9 +17,22 @@ export default function PostRide() {
 
   const submit = async (event) => {
     event.preventDefault();
+    if (!form.startLocation || !form.endLocation) {
+      setMessage('Please select both start and destination locations.');
+      return;
+    }
+
     await api.post('/rides', {
-      startLocation: { type: 'Point', name: form.startName, coordinates: [Number(form.startLongitude), Number(form.startLatitude)] },
-      endLocation: { type: 'Point', name: form.endName, coordinates: [Number(form.endLongitude), Number(form.endLatitude)] },
+      startLocation: {
+        type: 'Point',
+        name: form.startLocation.address,
+        coordinates: [form.startLocation.lng, form.startLocation.lat],
+      },
+      endLocation: {
+        type: 'Point',
+        name: form.endLocation.address,
+        coordinates: [form.endLocation.lng, form.endLocation.lat],
+      },
       dateTime: form.dateTime,
       vehicleType: form.vehicleType,
       seatsAvailable: Number(form.seatsAvailable),
@@ -37,20 +53,18 @@ export default function PostRide() {
 
         <section className="space-y-3">
           <h3 className="text-3xl font-bold">📍 Start Location</h3>
-          <div className="rounded-3xl border border-slate-300 p-5 grid md:grid-cols-3 gap-4">
-            <input className="soft-input" placeholder="Location Name" value={form.startName} onChange={(e) => setForm({ ...form, startName: e.target.value })} required />
-            <input className="soft-input" placeholder="Latitude" value={form.startLatitude} onChange={(e) => setForm({ ...form, startLatitude: e.target.value })} required />
-            <input className="soft-input" placeholder="Longitude" value={form.startLongitude} onChange={(e) => setForm({ ...form, startLongitude: e.target.value })} required />
-          </div>
+          <LocationPicker
+            label="Choose pickup point"
+            onLocationSelect={(location) => setForm((prev) => ({ ...prev, startLocation: location }))}
+          />
         </section>
 
         <section className="space-y-3">
           <h3 className="text-3xl font-bold">📍 Destination</h3>
-          <div className="rounded-3xl border border-slate-300 p-5 grid md:grid-cols-3 gap-4">
-            <input className="soft-input" placeholder="Location Name" value={form.endName} onChange={(e) => setForm({ ...form, endName: e.target.value })} required />
-            <input className="soft-input" placeholder="Latitude" value={form.endLatitude} onChange={(e) => setForm({ ...form, endLatitude: e.target.value })} required />
-            <input className="soft-input" placeholder="Longitude" value={form.endLongitude} onChange={(e) => setForm({ ...form, endLongitude: e.target.value })} required />
-          </div>
+          <LocationPicker
+            label="Choose destination"
+            onLocationSelect={(location) => setForm((prev) => ({ ...prev, endLocation: location }))}
+          />
         </section>
 
         <section className="space-y-3">

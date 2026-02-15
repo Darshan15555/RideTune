@@ -55,7 +55,7 @@ export default function Requests() {
                 {entry.status === 'accepted' && entry.roomId && (
                   <div className="flex gap-2 mt-3">
                     <Link className="px-3 py-1 rounded-full bg-indigo-600 text-white" to={`/chat?roomId=${entry.roomId}`}>Open Chat</Link>
-                    <Link className="px-3 py-1 rounded-full bg-cyan-600 text-white" to={`/live-ride?sessionId=${entry.sessionId}`}>Live Tracking</Link>
+                    <Link className="px-3 py-1 rounded-full bg-cyan-600 text-white" to={`/live-ride?sessionId=${entry.sessionId}&role=${tab === 'received' ? 'driver' : 'passenger'}`}>Live Tracking</Link>
                   </div>
                 )}
                 {tab === 'received' && entry.status === 'pending' && (

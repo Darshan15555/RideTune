@@ -132,6 +132,25 @@ router.put('/:id/reject', authMiddleware, validateObjectIdParam('id'), async (re
   return res.json(request);
 });
 
+
+router.get('/sessions/:id', authMiddleware, validateObjectIdParam('id'), async (req, res) => {
+  const session = await RideSession.findOne({
+    _id: req.params.id,
+    $or: [{ driver: req.user.id }, { passenger: req.user.id }],
+  }).populate('ride', 'startLocation endLocation');
+
+  if (!session) {
+    return res.status(404).json({ message: 'Ride session not found' });
+  }
+
+  const role = String(session.driver) === req.user.id ? 'driver' : 'passenger';
+
+  return res.json({
+    session,
+    role,
+  });
+});
+
 router.get('/messages/:roomId', authMiddleware, async (req, res) => {
   const { roomId } = req.params;
 

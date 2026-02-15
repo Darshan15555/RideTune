@@ -4,6 +4,7 @@ import User from '../models/User.js';
 import authMiddleware from '../middleware/authMiddleware.js';
 import { DEFAULT_NEAR_DISTANCE_METERS } from '../utils/distance.js';
 import { calculateCompatibility } from '../utils/interestMatch.js';
+import rateLimitRideSearch from '../middleware/rateLimitRideSearch.js';
 
 const router = express.Router();
 
@@ -26,9 +27,16 @@ router.post('/', authMiddleware, async (req, res) => {
   }
 });
 
-router.post('/search', authMiddleware, async (req, res) => {
+router.post('/search', authMiddleware, rateLimitRideSearch, async (req, res) => {
   try {
-    const { startLongitude, startLatitude, endLongitude, endLatitude } = req.body;
+    const startLongitude = req.body.startLongitude ?? req.body.startLocation?.coordinates?.[0];
+    const startLatitude = req.body.startLatitude ?? req.body.startLocation?.coordinates?.[1];
+    const endLongitude = req.body.endLongitude ?? req.body.endLocation?.coordinates?.[0];
+    const endLatitude = req.body.endLatitude ?? req.body.endLocation?.coordinates?.[1];
+    if ([startLongitude, startLatitude, endLongitude, endLatitude].some((value) => Number.isNaN(Number(value)))) {
+      return res.status(400).json({ message: 'Invalid coordinates supplied for ride search' });
+    }
+
     const requester = await User.findById(req.user.id);
 
     const rides = await Ride.find({
