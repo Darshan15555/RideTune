@@ -11,7 +11,24 @@ dotenv.config();
 const app = express();
 connectDB();
 
-app.use(cors({ origin: process.env.CLIENT_URL || '*'}));
+const allowedOrigins = new Set([
+  process.env.CLIENT_URL,
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+]);
+
+app.use(
+  cors({
+    origin(origin, callback) {
+      if (!origin || allowedOrigins.has(origin)) {
+        callback(null, true);
+        return;
+      }
+      callback(new Error('CORS not allowed for this origin'));
+    },
+  })
+);
+
 app.use(express.json());
 
 app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));

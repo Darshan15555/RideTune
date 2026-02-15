@@ -3,6 +3,11 @@ import api from '../services/api';
 
 const AuthContext = createContext(null);
 
+function saveSession(token, user) {
+  localStorage.setItem('token', token);
+  localStorage.setItem('user', JSON.stringify(user));
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => {
     const raw = localStorage.getItem('user');
@@ -11,14 +16,14 @@ export function AuthProvider({ children }) {
 
   const login = async (email, password) => {
     const { data } = await api.post('/auth/login', { email, password });
-    localStorage.setItem('token', data.token);
-    localStorage.setItem('user', JSON.stringify(data.user));
+    saveSession(data.token, data.user);
     setUser(data.user);
   };
 
   const register = async (payload) => {
-    await api.post('/auth/register', payload);
-    await login(payload.email, payload.password);
+    const { data } = await api.post('/auth/register', payload);
+    saveSession(data.token, data.user);
+    setUser(data.user);
   };
 
   const logout = () => {
