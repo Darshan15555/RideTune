@@ -1,0 +1,1 @@
+export const DEFAULT_NEAR_DISTANCE_METERS = 10000;

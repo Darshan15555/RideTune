@@ -1,0 +1,28 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply m-0 bg-slate-100 text-slate-900 antialiased;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  }
+}
+
+@layer components {
+  .glass-card {
+    @apply bg-white/90 border border-slate-200 rounded-[28px] shadow-[0_8px_40px_rgba(109,40,217,0.18)];
+  }
+
+  .gradient-text {
+    @apply bg-gradient-to-r from-indigo-500 via-blue-500 to-cyan-400 text-transparent bg-clip-text;
+  }
+
+  .primary-btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-full bg-gradient-to-r from-purple-600 to-indigo-500 text-white font-semibold px-6 py-3 shadow-[0_10px_28px_rgba(124,58,237,0.35)] transition hover:brightness-105;
+  }
+
+  .soft-input {
+    @apply w-full rounded-full border border-slate-300 bg-slate-50 px-5 py-3 text-slate-700 outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-100;
+  }
+}
