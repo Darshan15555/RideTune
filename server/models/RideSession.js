@@ -21,8 +21,18 @@ const rideSessionSchema = new mongoose.Schema(
     passenger: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     request: { type: mongoose.Schema.Types.ObjectId, ref: 'Request', required: true, unique: true },
     roomId: { type: String, required: true, unique: true },
-    status: { type: String, enum: ['active', 'completed'], default: 'active' },
+    status: {
+      type: String,
+      enum: ['searching', 'matched', 'driver_accepted', 'on_the_way', 'started', 'completed', 'cancelled'],
+      default: 'driver_accepted',
+    },
     currentDriverLocation: { type: locationSchema, default: () => ({ type: 'Point', coordinates: [] }) },
+    verificationOtp: { type: String, default: '' },
+    verifiedAt: { type: Date },
+    startedAt: { type: Date },
+    completedAt: { type: Date },
+    shareToken: { type: String, default: '' },
+    flaggedAsSuspicious: { type: Boolean, default: false },
   },
   { timestamps: { createdAt: true, updatedAt: true } }
 );

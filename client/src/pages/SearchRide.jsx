@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../services/api';
 import RideCard from '../components/RideCard';
@@ -7,6 +7,16 @@ import LocationPicker from '../components/LocationPicker';
 export default function SearchRide() {
   const [form, setForm] = useState({ startLocation: null, endLocation: null });
   const [rides, setRides] = useState([]);
+  const [heatmap, setHeatmap] = useState([]);
+
+
+  useEffect(() => {
+    const loadDemand = async () => {
+      const { data } = await api.get('/rides/heatmap/demand');
+      setHeatmap(data);
+    };
+    loadDemand();
+  }, []);
 
   const search = async (event) => {
     event.preventDefault();
@@ -52,6 +62,20 @@ export default function SearchRide() {
 
         <button className="primary-btn w-full text-xl" disabled={!form.startLocation || !form.endLocation}>🔎 Find Rides</button>
       </form>
+
+      {heatmap.length > 0 && (
+        <section className="bg-white border border-slate-200 rounded-2xl p-4">
+          <h3 className="font-semibold mb-2">Demand Heatmap (top zones)</h3>
+          <div className="grid md:grid-cols-3 gap-2 text-sm">
+            {heatmap.slice(0, 6).map((zone, index) => (
+              <div key={index} className="border rounded-lg p-2">
+                <p>Lat: {zone.lat}, Lng: {zone.lng}</p>
+                <p>Demand: <b>{zone.demand}</b></p>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       <section className="grid md:grid-cols-2 gap-4">
         {rides.map((ride) => <RideCard key={ride._id} ride={ride} onRequest={sendRequest} />)}

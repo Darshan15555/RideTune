@@ -21,9 +21,13 @@ const rideSchema = new mongoose.Schema(
     driver: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     startLocation: { type: pointSchema, required: true },
     endLocation: { type: pointSchema, required: true },
+    stops: { type: [pointSchema], default: [] },
     dateTime: { type: Date, required: true },
     vehicleType: { type: String, enum: ['Car', 'Bike'], required: true },
     seatsAvailable: { type: Number, min: 1, required: true },
+    totalFuelCost: { type: Number, min: 0, default: 0 },
+    tollCharges: { type: Number, min: 0, default: 0 },
+    distanceKm: { type: Number, min: 0, default: 0 },
   },
   { timestamps: true }
 );

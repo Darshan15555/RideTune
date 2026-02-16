@@ -26,3 +26,8 @@
     @apply w-full rounded-full border border-slate-300 bg-slate-50 px-5 py-3 text-slate-700 outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-100;
   }
 }
+
+.dark body { background: #0b1220; color: #e2e8f0; }
+.dark .glass-card, .dark .bg-white { background-color: #0f172a !important; color: #e2e8f0; }
+.dark .border { border-color: #334155 !important; }
+

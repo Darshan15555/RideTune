@@ -7,6 +7,7 @@ import authRoutes from './routes/authRoutes.js';
 import rideRoutes from './routes/rideRoutes.js';
 import requestRoutes from './routes/requestRoutes.js';
 import notificationRoutes from './routes/notificationRoutes.js';
+import userRoutes from './routes/userRoutes.js';
 import { initSocket } from './socket.js';
 
 dotenv.config();
@@ -44,6 +45,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/rides', rideRoutes);
 app.use('/api/requests', requestRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/users', userRoutes);
 
 const port = process.env.PORT || 5000;
 httpServer.listen(port, () => {

@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import NotificationBell from './NotificationBell';
@@ -5,9 +6,7 @@ import NotificationBell from './NotificationBell';
 function Brand() {
   return (
     <Link to="/" className="flex items-center gap-3">
-      <div className="h-12 w-12 rounded-2xl bg-gradient-to-br from-indigo-500 to-cyan-400 text-white grid place-items-center shadow-[0_6px_20px_rgba(59,130,246,0.45)]">
-        🚘
-      </div>
+      <div className="h-12 w-12 rounded-2xl bg-gradient-to-br from-indigo-500 to-cyan-400 text-white grid place-items-center shadow-[0_6px_20px_rgba(59,130,246,0.45)]">🚘</div>
       <span className="text-4xl font-extrabold tracking-tight gradient-text">TuneTrip</span>
     </Link>
   );
@@ -16,12 +15,19 @@ function Brand() {
 export default function Navbar() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const [dark, setDark] = useState(() => localStorage.getItem('theme') === 'dark');
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', dark);
+    localStorage.setItem('theme', dark ? 'dark' : 'light');
+  }, [dark]);
 
   return (
     <header className="bg-white/90 border-b border-slate-200 backdrop-blur">
       <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
         <Brand />
         <div className="flex items-center gap-4">
+          <button className="px-3 py-1 rounded-full border" onClick={() => setDark((prev) => !prev)}>{dark ? '☀️' : '🌙'}</button>
           {user && <NotificationBell />}
           {user && <p className="hidden md:block text-slate-500">{user.email}</p>}
           {user ? (

@@ -6,9 +6,12 @@ import LocationPicker from '../components/LocationPicker';
 const initialForm = {
   startLocation: null,
   endLocation: null,
+  stopsText: '',
   dateTime: '',
   vehicleType: 'Car',
   seatsAvailable: 1,
+  totalFuelCost: 0,
+  tollCharges: 0,
 };
 
 export default function PostRide() {
@@ -36,6 +39,8 @@ export default function PostRide() {
       dateTime: form.dateTime,
       vehicleType: form.vehicleType,
       seatsAvailable: Number(form.seatsAvailable),
+      totalFuelCost: Number(form.totalFuelCost),
+      tollCharges: Number(form.tollCharges),
     });
     setMessage('Ride posted successfully');
     setForm(initialForm);
@@ -53,18 +58,17 @@ export default function PostRide() {
 
         <section className="space-y-3">
           <h3 className="text-3xl font-bold">📍 Start Location</h3>
-          <LocationPicker
-            label="Choose pickup point"
-            onLocationSelect={(location) => setForm((prev) => ({ ...prev, startLocation: location }))}
-          />
+          <LocationPicker label="Choose pickup point" onLocationSelect={(location) => setForm((prev) => ({ ...prev, startLocation: location }))} />
         </section>
 
         <section className="space-y-3">
           <h3 className="text-3xl font-bold">📍 Destination</h3>
-          <LocationPicker
-            label="Choose destination"
-            onLocationSelect={(location) => setForm((prev) => ({ ...prev, endLocation: location }))}
-          />
+          <LocationPicker label="Choose destination" onLocationSelect={(location) => setForm((prev) => ({ ...prev, endLocation: location }))} />
+        </section>
+
+        <section className="space-y-3">
+          <h3 className="text-2xl font-bold">🛑 Multi-stop (optional)</h3>
+          <input className="soft-input" placeholder="Hubli, Kolhapur, Satara" value={form.stopsText} onChange={(e) => setForm({ ...form, stopsText: e.target.value })} />
         </section>
 
         <section className="space-y-3">
@@ -76,6 +80,8 @@ export default function PostRide() {
               <option>Bike</option>
             </select>
             <input className="soft-input" type="number" min="1" value={form.seatsAvailable} onChange={(e) => setForm({ ...form, seatsAvailable: e.target.value })} />
+            <input className="soft-input" type="number" min="0" placeholder="Total fuel cost" value={form.totalFuelCost} onChange={(e) => setForm({ ...form, totalFuelCost: e.target.value })} />
+            <input className="soft-input" type="number" min="0" placeholder="Toll charges" value={form.tollCharges} onChange={(e) => setForm({ ...form, tollCharges: e.target.value })} />
           </div>
         </section>
 

@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../services/api';
+import StatusBadge from '../components/StatusBadge';
+
+const nextStatuses = ['on_the_way', 'started', 'completed', 'cancelled'];
 
 export default function Requests() {
   const [sent, setSent] = useState([]);
@@ -19,6 +22,11 @@ export default function Requests() {
 
   const updateStatus = async (id, status) => {
     await api.put(`/requests/${id}/${status}`);
+    await load();
+  };
+
+  const updateRideState = async (sessionId, status) => {
+    await api.put(`/requests/sessions/${sessionId}/status`, { status });
     await load();
   };
 
@@ -47,17 +55,26 @@ export default function Requests() {
         ) : (
           <div className="space-y-3">
             {list.map((entry) => (
-              <div key={entry._id} className="border border-slate-300 rounded-2xl p-4 bg-white">
+              <div key={entry._id} className="border border-slate-300 rounded-2xl p-4 bg-white space-y-2">
                 {tab === 'received' && <p className="font-semibold">{entry.passenger.name} requested your ride.</p>}
                 {tab === 'sent' && <p className="font-semibold">Request for {entry.ride?.startLocation?.name} → {entry.ride?.endLocation?.name}</p>}
-                <p className="mt-2">Status: <b className="capitalize">{entry.status}</b></p>
+                <p>Status: <b className="capitalize">{entry.status}</b></p>
+                {entry.rideStatus && <StatusBadge status={entry.rideStatus} />}
                 {entry.contact && <p>Contact: {entry.contact}</p>}
+
                 {entry.status === 'accepted' && entry.roomId && (
-                  <div className="flex gap-2 mt-3">
+                  <div className="flex flex-wrap gap-2 mt-2 items-center">
                     <Link className="px-3 py-1 rounded-full bg-indigo-600 text-white" to={`/chat?roomId=${entry.roomId}`}>Open Chat</Link>
                     <Link className="px-3 py-1 rounded-full bg-cyan-600 text-white" to={`/live-ride?sessionId=${entry.sessionId}&role=${tab === 'received' ? 'driver' : 'passenger'}`}>Live Tracking</Link>
+                    {tab === 'received' && (
+                      <select className="soft-input max-w-[220px]" defaultValue="" onChange={(e) => e.target.value && updateRideState(entry.sessionId, e.target.value)}>
+                        <option value="" disabled>Update ride status</option>
+                        {nextStatuses.map((status) => <option key={status} value={status}>{status.replaceAll('_', ' ')}</option>)}
+                      </select>
+                    )}
                   </div>
                 )}
+
                 {tab === 'received' && entry.status === 'pending' && (
                   <div className="space-x-2 mt-3">
                     <button className="px-4 py-2 rounded-full bg-green-600 text-white" onClick={() => updateStatus(entry._id, 'accept')}>Accept</button>

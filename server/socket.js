@@ -12,17 +12,12 @@ async function persistLocation(sessionId) {
   if (!latest) return;
 
   await RideSession.findByIdAndUpdate(sessionId, {
-    currentDriverLocation: {
-      type: 'Point',
-      coordinates: [latest.longitude, latest.latitude],
-    },
+    currentDriverLocation: { type: 'Point', coordinates: [latest.longitude, latest.latitude] },
   });
 }
 
 function scheduleLocationFlush(sessionId) {
-  if (locationFlushTimers.has(sessionId)) {
-    return;
-  }
+  if (locationFlushTimers.has(sessionId)) return;
 
   const timer = setInterval(() => {
     persistLocation(sessionId).catch(() => undefined);
@@ -31,16 +26,16 @@ function scheduleLocationFlush(sessionId) {
   locationFlushTimers.set(sessionId, timer);
 }
 
-function stopLocationFlush(sessionId) {
-  const timer = locationFlushTimers.get(sessionId);
-  if (!timer) return;
-  clearInterval(timer);
-  locationFlushTimers.delete(sessionId);
-}
-
 async function createAndEmitNotification(io, userId, type, message) {
   const notification = await Notification.create({ user: userId, type, message });
   io.to(`user:${String(userId)}`).emit('new-notification', notification);
+}
+
+function suspiciousMovement(previous, next) {
+  if (!previous) return false;
+  const dLat = Math.abs(previous.latitude - next.latitude);
+  const dLng = Math.abs(previous.longitude - next.longitude);
+  return dLat + dLng > 0.8;
 }
 
 export function initSocket(server) {
@@ -52,9 +47,7 @@ export function initSocket(server) {
 
   io.use((socket, next) => {
     const token = socket.handshake.auth?.token;
-    if (!token || !process.env.JWT_SECRET) {
-      return next(new Error('Unauthorized'));
-    }
+    if (!token || !process.env.JWT_SECRET) return next(new Error('Unauthorized'));
 
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
@@ -69,22 +62,14 @@ export function initSocket(server) {
     socket.join(`user:${socket.user.id}`);
 
     socket.on('join-room', async ({ roomId }) => {
-      const session = await RideSession.findOne({
-        roomId,
-        $or: [{ driver: socket.user.id }, { passenger: socket.user.id }],
-      });
-
-      if (!session) {
-        socket.emit('error-message', 'Not allowed to join room');
-        return;
-      }
-
+      const session = await RideSession.findOne({ roomId, $or: [{ driver: socket.user.id }, { passenger: socket.user.id }] });
+      if (!session) return socket.emit('error-message', 'Not allowed to join room');
       socket.join(roomId);
     });
 
     socket.on('driver-location-update', async ({ sessionId, longitude, latitude }) => {
-      const session = await RideSession.findOne({ _id: sessionId, driver: socket.user.id, status: 'active' });
-      if (!session) {
+      const session = await RideSession.findOne({ _id: sessionId, driver: socket.user.id });
+      if (!session || ['cancelled', 'completed'].includes(session.status)) {
         socket.emit('error-message', 'Invalid ride session');
         return;
       }
@@ -101,31 +86,46 @@ export function initSocket(server) {
         return;
       }
 
-      liveLocations.set(sessionId, payload);
-      scheduleLocationFlush(sessionId);
-      io.to(`user:${String(session.passenger)}`).emit('location-update', payload);
-    });
-
-    socket.on('send-message', async ({ roomId, message }) => {
-      if (!message || typeof message !== 'string' || !message.trim()) return;
-
-      const session = await RideSession.findOne({
-        roomId,
-        $or: [{ driver: socket.user.id }, { passenger: socket.user.id }],
-      });
-
-      if (!session) {
-        socket.emit('error-message', 'Not allowed to send messages in this room');
-        return;
+      const prev = liveLocations.get(sessionId);
+      if (suspiciousMovement(prev, payload)) {
+        session.flaggedAsSuspicious = true;
+        await session.save();
+        io.to(session.roomId).emit('fraud-flag', { sessionId, reason: 'Suspicious location jump detected' });
       }
 
-      const savedMessage = await Message.create({ roomId, sender: socket.user.id, message: message.trim() });
+      liveLocations.set(sessionId, payload);
+      scheduleLocationFlush(sessionId);
+      io.to(session.roomId).emit('location-update', payload);
+    });
+
+    socket.on('typing', ({ roomId, isTyping }) => {
+      socket.to(roomId).emit('typing', { roomId, userId: socket.user.id, isTyping: Boolean(isTyping) });
+    });
+
+    socket.on('send-message', async ({ roomId, message, messageType = 'text', mediaUrl = '' }) => {
+      const session = await RideSession.findOne({ roomId, $or: [{ driver: socket.user.id }, { passenger: socket.user.id }] });
+      if (!session) return socket.emit('error-message', 'Not allowed to send messages in this room');
+
+      if (!String(message || '').trim() && !mediaUrl) return;
+
+      const savedMessage = await Message.create({
+        roomId,
+        sender: socket.user.id,
+        message: String(message || '').trim(),
+        messageType,
+        mediaUrl,
+        readBy: [socket.user.id],
+      });
+
       const messagePayload = {
         _id: savedMessage._id,
         roomId,
         sender: socket.user.id,
         message: savedMessage.message,
+        messageType: savedMessage.messageType,
+        mediaUrl: savedMessage.mediaUrl,
         timestamp: savedMessage.timestamp,
+        readBy: savedMessage.readBy,
       };
 
       io.to(roomId).emit('receive-message', messagePayload);
@@ -134,8 +134,19 @@ export function initSocket(server) {
       await createAndEmitNotification(io, receiverId, 'message', 'You have a new message.');
     });
 
-    socket.on('disconnect', () => {
-      // No-op: active sessions may still have other participants connected.
+    socket.on('message-read', async ({ roomId, messageId }) => {
+      const session = await RideSession.findOne({ roomId, $or: [{ driver: socket.user.id }, { passenger: socket.user.id }] });
+      if (!session) return;
+
+      const message = await Message.findByIdAndUpdate(
+        messageId,
+        { $addToSet: { readBy: socket.user.id } },
+        { new: true }
+      );
+
+      if (message) {
+        io.to(roomId).emit('message-read', { messageId: message._id, readBy: message.readBy });
+      }
     });
   });
 
