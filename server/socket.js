@@ -3,9 +3,14 @@ import { Server } from 'socket.io';
 import RideSession from './models/RideSession.js';
 import Message from './models/Message.js';
 import Notification from './models/Notification.js';
+import Ride from './models/Ride.js';
+import { haversineKm } from './utils/distance.js';
 
 const liveLocations = new Map();
 const locationFlushTimers = new Map();
+const rideSearchSubscriptions = new Map();
+const rideSearchTimers = new Map();
+const simulatedDriverPositions = new Map();
 
 async function persistLocation(sessionId) {
   const latest = liveLocations.get(sessionId);
@@ -38,6 +43,87 @@ function suspiciousMovement(previous, next) {
   return dLat + dLng > 0.8;
 }
 
+function toFixedNumber(value, digits = 6) {
+  return Number(Number(value).toFixed(digits));
+}
+
+function randomStep() {
+  return (Math.random() - 0.5) * 0.0016;
+}
+
+function normalizeSearchPayload(payload = {}) {
+  const center = payload.center || {};
+  const lat = Number(center.lat);
+  const lng = Number(center.lng);
+
+  return {
+    center: Number.isNaN(lat) || Number.isNaN(lng) ? null : { lat, lng },
+    radiusKm: Math.max(1, Number(payload.radiusKm || 10)),
+    vehicleType: payload.vehicleType || '',
+    genderPreference: payload.genderPreference || '',
+  };
+}
+
+async function getNearbyDriversSnapshot(subscription = {}) {
+  const now = new Date();
+  const rides = await Ride.find({
+    dateTime: { $gte: now },
+    ...(subscription.vehicleType ? { vehicleType: subscription.vehicleType } : {}),
+  })
+    .populate('driver', 'name gender')
+    .select('driver vehicleType startLocation');
+
+  const drivers = [];
+  for (const ride of rides) {
+    const coords = ride.startLocation?.coordinates;
+    if (!coords || coords.length !== 2) continue;
+    const [lng, lat] = coords.map(Number);
+    if ([lng, lat].some((v) => Number.isNaN(v))) continue;
+
+    const key = String(ride.driver?._id || ride.driver);
+    const previous = simulatedDriverPositions.get(key) || { lat, lng };
+    const next = {
+      lat: toFixedNumber(previous.lat + randomStep(), 6),
+      lng: toFixedNumber(previous.lng + randomStep(), 6),
+    };
+    simulatedDriverPositions.set(key, next);
+
+    if (subscription.center) {
+      const distanceFromCenter = haversineKm([subscription.center.lng, subscription.center.lat], [next.lng, next.lat]);
+      if (distanceFromCenter > subscription.radiusKm) continue;
+    }
+
+    const driverGender = ride.driver?.gender || 'prefer_not_say';
+    if (
+      subscription.genderPreference &&
+      subscription.genderPreference !== 'any' &&
+      subscription.genderPreference !== driverGender
+    ) {
+      continue;
+    }
+
+    drivers.push({
+      driverId: key,
+      name: ride.driver?.name || 'Driver',
+      vehicleType: ride.vehicleType,
+      gender: driverGender,
+      lat: next.lat,
+      lng: next.lng,
+    });
+  }
+
+  return drivers;
+}
+
+function clearRideSearchStream(socketId) {
+  const timer = rideSearchTimers.get(socketId);
+  if (timer) {
+    clearInterval(timer);
+    rideSearchTimers.delete(socketId);
+  }
+  rideSearchSubscriptions.delete(socketId);
+}
+
 export function initSocket(server) {
   const io = new Server(server, {
     cors: {
@@ -65,6 +151,40 @@ export function initSocket(server) {
       const session = await RideSession.findOne({ roomId, $or: [{ driver: socket.user.id }, { passenger: socket.user.id }] });
       if (!session) return socket.emit('error-message', 'Not allowed to join room');
       socket.join(roomId);
+    });
+
+    socket.on('ride-search-subscribe', async (payload = {}) => {
+      const normalized = normalizeSearchPayload(payload);
+      if (!normalized.center) {
+        socket.emit('ride-search-error', { message: 'Invalid location for live ride search' });
+        return;
+      }
+
+      rideSearchSubscriptions.set(socket.id, normalized);
+      clearRideSearchStream(socket.id);
+      rideSearchSubscriptions.set(socket.id, normalized);
+
+      const emitSnapshot = async () => {
+        const subscription = rideSearchSubscriptions.get(socket.id);
+        if (!subscription) return;
+
+        const drivers = await getNearbyDriversSnapshot(subscription);
+        socket.emit('ride-search-nearby-drivers', {
+          drivers,
+          updatedAt: new Date().toISOString(),
+        });
+      };
+
+      await emitSnapshot();
+
+      const timer = setInterval(() => {
+        emitSnapshot().catch(() => undefined);
+      }, 5000);
+      rideSearchTimers.set(socket.id, timer);
+    });
+
+    socket.on('ride-search-unsubscribe', () => {
+      clearRideSearchStream(socket.id);
     });
 
     socket.on('driver-location-update', async ({ sessionId, longitude, latitude }) => {
@@ -147,6 +267,10 @@ export function initSocket(server) {
       if (message) {
         io.to(roomId).emit('message-read', { messageId: message._id, readBy: message.readBy });
       }
+    });
+
+    socket.on('disconnect', () => {
+      clearRideSearchStream(socket.id);
     });
   });
 

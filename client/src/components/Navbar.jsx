@@ -6,7 +6,9 @@ import NotificationBell from './NotificationBell';
 function Brand() {
   return (
     <Link to="/" className="flex items-center gap-3">
-      <div className="h-12 w-12 rounded-2xl bg-gradient-to-br from-indigo-500 to-cyan-400 text-white grid place-items-center shadow-[0_6px_20px_rgba(59,130,246,0.45)]">🚘</div>
+      <div className="h-12 w-12 rounded-2xl bg-gradient-to-br from-indigo-500 to-cyan-400 text-white grid place-items-center shadow-[0_6px_20px_rgba(59,130,246,0.45)]">
+        TT
+      </div>
       <span className="text-4xl font-extrabold tracking-tight gradient-text">TuneTrip</span>
     </Link>
   );
@@ -27,7 +29,17 @@ export default function Navbar() {
       <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
         <Brand />
         <div className="flex items-center gap-4">
-          <button className="px-3 py-1 rounded-full border" onClick={() => setDark((prev) => !prev)}>{dark ? '☀️' : '🌙'}</button>
+          {user && (
+            <Link
+              to="/profile"
+              className="px-4 py-2 rounded-full border border-slate-300 bg-white hover:bg-slate-100 font-semibold"
+            >
+              Profile
+            </Link>
+          )}
+          <button className="px-3 py-1 rounded-full border" onClick={() => setDark((prev) => !prev)}>
+            {dark ? 'Light' : 'Dark'}
+          </button>
           {user && <NotificationBell />}
           {user && <p className="hidden md:block text-slate-500">{user.email}</p>}
           {user ? (
@@ -41,7 +53,9 @@ export default function Navbar() {
               Logout
             </button>
           ) : (
-            <Link to="/login" className="primary-btn px-8">Get Started</Link>
+            <Link to="/login" className="primary-btn px-8">
+              Get Started
+            </Link>
           )}
         </div>
       </div>
