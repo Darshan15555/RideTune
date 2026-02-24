@@ -1,27 +1,49 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { GoogleMap, Marker, Polyline, useLoadScript } from '@react-google-maps/api';
+import { useEffect, useMemo, useState } from 'react';
+import { MapContainer, Marker, Polyline, TileLayer, useMap } from 'react-leaflet';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png';
+import markerIcon from 'leaflet/dist/images/marker-icon.png';
+import markerShadow from 'leaflet/dist/images/marker-shadow.png';
 
-const libraries = ['places'];
-const defaultCenter = { lat: 20.5937, lng: 78.9629 };
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: markerIcon2x,
+  iconUrl: markerIcon,
+  shadowUrl: markerShadow,
+});
 
-function midpoint(a, b) {
-  return { lat: (a.lat + b.lat) / 2, lng: (a.lng + b.lng) / 2 };
+const defaultCenter = { lat: 20, lng: 78 };
+
+function isValidLatLng(location) {
+  return Number.isFinite(Number(location?.lat)) && Number.isFinite(Number(location?.lng));
 }
 
-function toRouteSummary(route) {
-  const legs = route.legs || [];
-  const totalMeters = legs.reduce((sum, leg) => sum + Number(leg.distance?.value || 0), 0);
-  const totalSeconds = legs.reduce((sum, leg) => sum + Number(leg.duration?.value || 0), 0);
-  const distanceKm = Number((totalMeters / 1000).toFixed(2));
-  const durationMinutes = Math.max(1, Math.round(totalSeconds / 60));
+function haversineKm(a, b) {
+  const toRadians = (degrees) => (degrees * Math.PI) / 180;
+  const dLat = toRadians(Number(b.lat) - Number(a.lat));
+  const dLng = toRadians(Number(b.lng) - Number(a.lng));
+  const lat1 = toRadians(Number(a.lat));
+  const lat2 = toRadians(Number(b.lat));
+  const earthRadiusKm = 6371;
 
-  return {
-    polyline: (route.overview_path || []).map((point) => ({ lat: point.lat(), lng: point.lng() })),
-    distanceKm,
-    durationMinutes,
-    distanceText: `${distanceKm} km`,
-    durationText: `${durationMinutes} min`,
-  };
+  const h =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+
+  return Number((2 * earthRadiusKm * Math.asin(Math.sqrt(h))).toFixed(2));
+}
+
+function FitBounds({ points }) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (!points.length) return;
+    const bounds = L.latLngBounds(points.map((point) => [point.lat, point.lng]));
+    map.fitBounds(bounds, { padding: [30, 30] });
+  }, [map, points]);
+
+  return null;
 }
 
 export default function LiveMap({
@@ -35,11 +57,22 @@ export default function LiveMap({
   nearbyDrivers = [],
   className = '',
 }) {
-  const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
-  const { isLoaded, loadError } = useLoadScript({ googleMapsApiKey: apiKey || '', libraries });
-  const mapRef = useRef(null);
-  const [routes, setRoutes] = useState([]);
-  const [mapError, setMapError] = useState('');
+  const [currentLocation, setCurrentLocation] = useState(null);
+
+  useEffect(() => {
+    if (!navigator.geolocation) {
+      setCurrentLocation(defaultCenter);
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setCurrentLocation({ lat: Number(pos.coords.latitude), lng: Number(pos.coords.longitude) });
+      },
+      () => setCurrentLocation(defaultCenter),
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }
+    );
+  }, []);
 
   const pickupPoint = useMemo(
     () =>
@@ -70,86 +103,71 @@ export default function LiveMap({
     [passengerPosition]
   );
 
-  useEffect(() => {
-    if (!window.google?.maps || !pickupPoint || !dropPoint) {
-      setRoutes([]);
-      onRoutesChange?.([]);
-      return;
-    }
+  const pointsForBounds = useMemo(
+    () => [pickupPoint, dropPoint, driverPoint, passengerPoint].filter(Boolean),
+    [pickupPoint, dropPoint, driverPoint, passengerPoint]
+  );
+  const mapCenter = useMemo(() => {
+    if (isValidLatLng(pickupPoint)) return pickupPoint;
+    if (isValidLatLng(dropPoint)) return dropPoint;
+    if (isValidLatLng(driverPoint)) return driverPoint;
+    if (isValidLatLng(passengerPoint)) return passengerPoint;
+    if (isValidLatLng(currentLocation)) return currentLocation;
+    return defaultCenter;
+  }, [pickupPoint, dropPoint, driverPoint, passengerPoint, currentLocation]);
 
-    const service = new window.google.maps.DirectionsService();
-    service.route(
+  const routes = useMemo(() => {
+    if (!pickupPoint || !dropPoint) return [];
+    const distanceKm = haversineKm(pickupPoint, dropPoint);
+    const durationMinutes = Math.max(1, Math.round(distanceKm * 2.2));
+    return [
       {
-        origin: pickupPoint,
-        destination: dropPoint,
-        travelMode: window.google.maps.TravelMode.DRIVING,
-        provideRouteAlternatives: true,
+        polyline: [pickupPoint, dropPoint],
+        distanceKm,
+        durationMinutes,
+        distanceText: `${distanceKm} km`,
+        durationText: `${durationMinutes} min`,
       },
-      (result, status) => {
-        if (status !== 'OK' || !result?.routes?.length) {
-          setMapError('No routes found');
-          setRoutes([]);
-          onRoutesChange?.([]);
-          return;
-        }
-
-        const nextRoutes = result.routes.map(toRouteSummary);
-        setMapError('');
-        setRoutes(nextRoutes);
-        onRoutesChange?.(nextRoutes);
-
-        const bounds = new window.google.maps.LatLngBounds();
-        bounds.extend(pickupPoint);
-        bounds.extend(dropPoint);
-        mapRef.current?.fitBounds(bounds);
-        mapRef.current?.panTo(midpoint(pickupPoint, dropPoint));
-      }
-    );
+    ];
   }, [pickupPoint, dropPoint]);
 
-  if (!apiKey) return <p className="text-red-600">Missing Google Maps API key.</p>;
-  if (loadError) return <p className="text-red-600">Failed to load Google Maps.</p>;
-  if (!isLoaded) return <p className="text-slate-500">Loading map...</p>;
+  useEffect(() => {
+    onRoutesChange?.(routes);
+  }, [onRoutesChange, routes]);
 
   return (
     <div className={`space-y-3 ${className}`}>
       <div className="h-[420px] w-full rounded-2xl overflow-hidden border border-slate-300">
-        <GoogleMap
-          mapContainerStyle={{ width: '100%', height: '100%' }}
-          zoom={12}
-          center={pickupPoint || dropPoint || driverPoint || passengerPoint || defaultCenter}
-          onLoad={(map) => {
-            mapRef.current = map;
-          }}
-          options={{ mapTypeControl: false, streetViewControl: false, fullscreenControl: false }}
-        >
-          {pickupPoint && <Marker position={pickupPoint} label="P" />}
-          {dropPoint && <Marker position={dropPoint} label="D" />}
-          {driverPoint && <Marker position={driverPoint} label="D" />}
-          {passengerPoint && <Marker position={passengerPoint} label="P" />}
+        {isValidLatLng(mapCenter) && (
+          <MapContainer center={[mapCenter.lat, mapCenter.lng]} zoom={12} style={{ width: '100%', height: '100%' }}>
+          <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+          <FitBounds points={pointsForBounds} />
+
+          {pickupPoint && <Marker position={[pickupPoint.lat, pickupPoint.lng]} />}
+          {dropPoint && <Marker position={[dropPoint.lat, dropPoint.lng]} />}
+          {driverPoint && <Marker position={[driverPoint.lat, driverPoint.lng]} />}
+          {passengerPoint && <Marker position={[passengerPoint.lat, passengerPoint.lng]} />}
 
           {routes.map((route, index) => (
             <Polyline
               key={`route-${index}`}
-              path={route.polyline}
-              options={{
-                strokeColor: index === selectedRouteIndex ? '#1d4ed8' : '#64748b',
-                strokeOpacity: index === selectedRouteIndex ? 0.95 : 0.45,
-                strokeWeight: index === selectedRouteIndex ? 6 : 4,
-                zIndex: index === selectedRouteIndex ? 10 : 5,
+              positions={route.polyline.map((point) => [point.lat, point.lng])}
+              eventHandlers={{ click: () => onRouteSelect?.(index) }}
+              pathOptions={{
+                color: index === selectedRouteIndex ? '#1d4ed8' : '#64748b',
+                opacity: index === selectedRouteIndex ? 0.95 : 0.45,
+                weight: index === selectedRouteIndex ? 6 : 4,
               }}
-              onClick={() => onRouteSelect?.(index)}
             />
           ))}
 
           {driverPoint && passengerPoint && !routes.length && (
             <Polyline
-              path={[driverPoint, passengerPoint]}
-              options={{
-                strokeColor: '#0f172a',
-                strokeOpacity: 0.7,
-                strokeWeight: 4,
-              }}
+              positions={[
+                [driverPoint.lat, driverPoint.lng],
+                [passengerPoint.lat, passengerPoint.lng],
+              ]}
+              pathOptions={{ color: '#0f172a', opacity: 0.7, weight: 4 }}
             />
           )}
 
@@ -158,15 +176,12 @@ export default function LiveMap({
             .map((driver) => (
               <Marker
                 key={driver.driverId || `${driver.lat}-${driver.lng}`}
-                position={{ lat: Number(driver.lat), lng: Number(driver.lng) }}
-                label={String(driver.vehicleType || 'D').slice(0, 1)}
-                title={`${driver.name || 'Driver'} (${driver.vehicleType || 'Vehicle'})`}
+                position={[Number(driver.lat), Number(driver.lng)]}
               />
             ))}
-        </GoogleMap>
+          </MapContainer>
+        )}
       </div>
-
-      {mapError && <p className="text-red-600">{mapError}</p>}
     </div>
   );
 }

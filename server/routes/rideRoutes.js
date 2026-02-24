@@ -19,19 +19,24 @@ function buildRoutePoints(ride) {
 }
 
 function normalizeSearchPayload(body = {}) {
-  const startLongitude = body.startLongitude ?? body.startLocation?.coordinates?.[0];
-  const startLatitude = body.startLatitude ?? body.startLocation?.coordinates?.[1];
-  const endLongitude = body.endLongitude ?? body.endLocation?.coordinates?.[0];
-  const endLatitude = body.endLatitude ?? body.endLocation?.coordinates?.[1];
+  const startLongitude =
+    body.startLongitude ?? body.startLng ?? body.pickupLocation?.coordinates?.[0] ?? body.startLocation?.coordinates?.[0];
+  const startLatitude =
+    body.startLatitude ?? body.startLat ?? body.pickupLocation?.coordinates?.[1] ?? body.startLocation?.coordinates?.[1];
+  const endLongitude =
+    body.endLongitude ?? body.endLng ?? body.dropLocation?.coordinates?.[0] ?? body.endLocation?.coordinates?.[0];
+  const endLatitude =
+    body.endLatitude ?? body.endLat ?? body.dropLocation?.coordinates?.[1] ?? body.endLocation?.coordinates?.[1];
   const passengerStops = Array.isArray(body.stops) ? body.stops : [];
 
   const filters = {
-    maxDetourKm: Number(body.maxDetourKm ?? 20),
-    timeFlexMinutes: Number(body.timeFlexMinutes ?? 0),
     vehicleType: body.vehicleType || '',
     genderPreference: body.genderPreference || '',
     minCompatibilityScore: Number(body.minCompatibilityScore ?? 0),
-    proximityKm: Number(body.proximityKm ?? 10),
+    maxPrice: Number(body.maxPrice ?? 0),
+    searchDate: body.date || '',
+    timeWindow: body.timeWindow || '',
+    proximityKm: Number(body.proximityKm ?? 15),
     preferredDateTime: body.preferredDateTime ? new Date(body.preferredDateTime) : null,
   };
 
@@ -64,38 +69,90 @@ async function searchRidesForUser(userId, payload = {}) {
     return { error: { status: 401, message: 'User not found' } };
   }
 
-  const nearDistanceMeters = Math.max(1000, Number(filters.proximityKm || 10) * 1000);
-  const rideQuery = {
+  const nearDistanceMeters = Math.max(1000, Number(filters.proximityKm || 15) * 1000);
+  const now = new Date();
+  const rideDateFilter = { $gte: now };
+
+  if (filters.searchDate) {
+    const dayStart = new Date(`${filters.searchDate}T00:00:00`);
+    const dayEnd = new Date(`${filters.searchDate}T23:59:59`);
+    if (!Number.isNaN(dayStart.getTime()) && !Number.isNaN(dayEnd.getTime())) {
+      rideDateFilter.$gte = dayStart;
+      rideDateFilter.$lte = dayEnd;
+
+      if (filters.timeWindow === 'morning') {
+        rideDateFilter.$gte = new Date(`${filters.searchDate}T05:00:00`);
+        rideDateFilter.$lte = new Date(`${filters.searchDate}T11:59:59`);
+      } else if (filters.timeWindow === 'afternoon') {
+        rideDateFilter.$gte = new Date(`${filters.searchDate}T12:00:00`);
+        rideDateFilter.$lte = new Date(`${filters.searchDate}T16:59:59`);
+      } else if (filters.timeWindow === 'evening') {
+        rideDateFilter.$gte = new Date(`${filters.searchDate}T17:00:00`);
+        rideDateFilter.$lte = new Date(`${filters.searchDate}T22:59:59`);
+      }
+    }
+  }
+
+  const geoNearQuery = {
     driver: { $ne: userId },
-    dateTime: { $gte: new Date() },
-    startLocation: {
-      $near: {
-        $geometry: { type: 'Point', coordinates: [startLongitude, startLatitude] },
-        $maxDistance: nearDistanceMeters || DEFAULT_NEAR_DISTANCE_METERS,
-      },
-    },
-    endLocation: {
-      $near: {
-        $geometry: { type: 'Point', coordinates: [endLongitude, endLatitude] },
-        $maxDistance: nearDistanceMeters || DEFAULT_NEAR_DISTANCE_METERS,
-      },
-    },
+    dateTime: rideDateFilter,
   };
 
   if (filters.vehicleType) {
-    rideQuery.vehicleType = filters.vehicleType;
+    geoNearQuery.vehicleType = filters.vehicleType;
+  }
+  if (filters.maxPrice > 0) {
+    geoNearQuery.pricePerSeat = { $lte: filters.maxPrice };
   }
 
-  const rides = await Ride.find(rideQuery).populate(
+  const nearbyByPickup = await Ride.aggregate([
+    {
+      $geoNear: {
+        near: { type: 'Point', coordinates: [startLongitude, startLatitude] },
+        distanceField: 'pickupDistanceMeters',
+        spherical: true,
+        maxDistance: nearDistanceMeters || DEFAULT_NEAR_DISTANCE_METERS,
+        key: 'startLocation',
+        query: geoNearQuery,
+      },
+    },
+    { $sort: { pickupDistanceMeters: 1, dateTime: 1 } },
+  ]);
+
+  const withDropDistance = nearbyByPickup
+    .map((ride) => {
+      const endCoords = ride.endLocation?.coordinates || ride.dropLocation?.coordinates;
+      if (!Array.isArray(endCoords) || endCoords.length !== 2) return null;
+      const endDistanceKm = haversineKm([endLongitude, endLatitude], endCoords);
+      return { ...ride, endDistanceKm };
+    })
+    .filter(Boolean)
+    .filter((ride) => ride.endDistanceKm <= nearDistanceMeters / 1000);
+
+  const rideIds = withDropDistance.map((ride) => ride._id);
+  const rideDistanceMap = new Map(
+    withDropDistance.map((ride) => [
+      String(ride._id),
+      {
+        pickupDistanceKm: Number((Number(ride.pickupDistanceMeters || 0) / 1000).toFixed(2)),
+        endDistanceKm: Number(Number(ride.endDistanceKm || 0).toFixed(2)),
+      },
+    ])
+  );
+
+  const rides = await Ride.find({ _id: { $in: rideIds } }).populate(
     'driver',
     'name email phone interests education workDomain workType bio travelFrequency smokingPreference conversationStyle gender genderPreference age ageRange travelPurpose averageRating'
   );
+  const ridesById = new Map(rides.map((ride) => [String(ride._id), ride]));
+  const orderedRides = rideIds.map((id) => ridesById.get(String(id))).filter(Boolean);
 
   const passengerRoute = [[startLongitude, startLatitude], ...passengerStops, [endLongitude, endLatitude]];
   const passengerDistanceKm = haversineKm([startLongitude, startLatitude], [endLongitude, endLatitude]);
 
-  const withCompatibility = rides
+  const withCompatibility = orderedRides
     .map((ride) => {
+      const metrics = rideDistanceMap.get(String(ride._id)) || { pickupDistanceKm: 0, endDistanceKm: 0 };
       const routeOverlap = calculateRouteOverlap(passengerRoute, buildRoutePoints(ride));
       const compatibility = calculateCompatibilityV2(requester, ride.driver, {
         routeOverlapScore: routeOverlap.overlapScore,
@@ -116,20 +173,22 @@ async function searchRidesForUser(userId, payload = {}) {
         detourKm,
         etaMinutes: Math.round((ride.distanceKm || passengerDistanceKm || 1) * 2.2),
         searchMetrics: {
-          startProximityKm: Number(
-            haversineKm([startLongitude, startLatitude], ride.startLocation?.coordinates || []).toFixed(2)
-          ),
-          endProximityKm: Number(
-            haversineKm([endLongitude, endLatitude], ride.endLocation?.coordinates || []).toFixed(2)
-          ),
+          startProximityKm: metrics.pickupDistanceKm,
+          endProximityKm: metrics.endDistanceKm,
           timeDeltaMinutes: Math.round(timeDeltaMinutes),
         },
       };
     })
     .filter((ride) => {
       if (filters.minCompatibilityScore && ride.compatibility < filters.minCompatibilityScore) return false;
-      if (filters.maxDetourKm && ride.detourKm > filters.maxDetourKm) return false;
-      if (filters.timeFlexMinutes && ride.searchMetrics.timeDeltaMinutes > filters.timeFlexMinutes) return false;
+      if (
+        ride.genderPreference &&
+        ride.genderPreference !== 'any' &&
+        String(requester.gender || '') &&
+        String(ride.genderPreference) !== String(requester.gender)
+      ) {
+        return false;
+      }
       if (
         filters.genderPreference &&
         filters.genderPreference !== 'any' &&
@@ -140,6 +199,9 @@ async function searchRidesForUser(userId, payload = {}) {
       return true;
     })
     .sort((a, b) => {
+      if ((a.searchMetrics?.startProximityKm || 0) !== (b.searchMetrics?.startProximityKm || 0)) {
+        return (a.searchMetrics?.startProximityKm || 0) - (b.searchMetrics?.startProximityKm || 0);
+      }
       if (b.compatibility !== a.compatibility) return b.compatibility - a.compatibility;
       if ((b.routeOverlap?.overlapPercent || 0) !== (a.routeOverlap?.overlapPercent || 0)) {
         return (b.routeOverlap?.overlapPercent || 0) - (a.routeOverlap?.overlapPercent || 0);
@@ -162,18 +224,57 @@ async function searchRidesForUser(userId, payload = {}) {
 
 router.post('/', authMiddleware, async (req, res) => {
   try {
-    const { startLocation, endLocation, stops = [], dateTime, vehicleType, seatsAvailable, totalFuelCost = 0, tollCharges = 0 } = req.body;
+    const {
+      startLocation,
+      endLocation,
+      stops = [],
+      date,
+      time,
+      dateTime,
+      vehicleType,
+      seatsAvailable,
+      pricePerSeat,
+      luggageAllowed = false,
+      genderPreference = 'any',
+      musicPreference = [],
+      allowPreRideChat = true,
+      totalFuelCost = 0,
+      tollCharges = 0,
+      distanceKm = 0,
+    } = req.body;
+
+    const computedDateTime =
+      dateTime ||
+      (() => {
+        if (!date || !time) return null;
+        const parsed = new Date(`${date}T${time}:00`);
+        return Number.isNaN(parsed.getTime()) ? null : parsed;
+      })();
+
+    if (!computedDateTime) {
+      return res.status(400).json({ message: 'date and time are required' });
+    }
 
     const ride = await Ride.create({
       driver: req.user.id,
       startLocation,
       endLocation,
+      pickupLocation: startLocation,
+      dropLocation: endLocation,
       stops,
-      dateTime,
+      date: date || new Date(computedDateTime).toISOString().slice(0, 10),
+      time: time || new Date(computedDateTime).toISOString().slice(11, 16),
+      dateTime: computedDateTime,
       vehicleType,
       seatsAvailable,
+      pricePerSeat,
+      luggageAllowed,
+      genderPreference,
+      musicPreference,
+      allowPreRideChat,
       totalFuelCost,
       tollCharges,
+      distanceKm,
     });
 
     return res.status(201).json(ride);
@@ -201,7 +302,7 @@ router.post('/search/proximity', authMiddleware, rateLimitRideSearch, async (req
       nearbyDrivers: result.nearbyDrivers,
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message });
+    return res.status(500).json({ success: false, message: error.message });
   }
 });
 

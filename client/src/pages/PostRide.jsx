@@ -1,139 +1,84 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useLoadScript } from '@react-google-maps/api';
 import api from '../services/api';
 import LocationPicker from '../components/LocationPicker';
-import Map from '../components/Map';
 
-const libraries = ['places'];
+const VEHICLE_OPTIONS = ['Car', 'Bike', 'SUV'];
+const SEAT_OPTIONS = [1, 2, 3, 4, 5, 6];
+const MUSIC_OPTIONS = ['Pop', 'Classical', 'Bollywood', 'Rock', 'Jazz', 'Hip Hop', 'EDM', 'No Preference'];
+const PRICE_PER_KM_BY_VEHICLE = { Bike: 8, Car: 12, SUV: 16 };
 
-function readAddressComponent(components = [], type) {
-  return components.find((entry) => entry.types?.includes(type))?.long_name || '';
+function isValidLatLng(location) {
+  return Number.isFinite(Number(location?.lat)) && Number.isFinite(Number(location?.lng));
 }
 
-function formatCityStateCountry(result) {
-  const components = result?.address_components || [];
-  const city =
-    readAddressComponent(components, 'locality') ||
-    readAddressComponent(components, 'administrative_area_level_2');
-  const state = readAddressComponent(components, 'administrative_area_level_1');
-  const country = readAddressComponent(components, 'country');
-  return [city, state, country].filter(Boolean).join(', ') || result?.formatted_address || '';
-}
+function haversineKm(a, b) {
+  const lat1 = Number(a?.lat);
+  const lng1 = Number(a?.lng);
+  const lat2 = Number(b?.lat);
+  const lng2 = Number(b?.lng);
+  if (![lat1, lng1, lat2, lng2].every((value) => Number.isFinite(value))) return 0;
 
-function getCurrentPosition() {
-  return new Promise((resolve, reject) => {
-    navigator.geolocation.getCurrentPosition(resolve, reject, {
-      enableHighAccuracy: true,
-      timeout: 12000,
-      maximumAge: 0,
-    });
-  });
-}
+  const toRadians = (degrees) => (degrees * Math.PI) / 180;
+  const dLat = toRadians(lat2 - lat1);
+  const dLng = toRadians(lng2 - lng1);
+  const sLat1 = toRadians(lat1);
+  const sLat2 = toRadians(lat2);
+  const earthRadiusKm = 6371;
 
-function reverseGeocode(geocoder, lat, lng) {
-  return new Promise((resolve, reject) => {
-    geocoder.geocode({ location: { lat, lng } }, (results, status) => {
-      if (status !== 'OK' || !results?.length) {
-        reject(new Error(`Geocoder failed with status: ${status || 'UNKNOWN'}`));
-        return;
-      }
-      resolve(results[0]);
-    });
-  });
-}
+  const h =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(sLat1) * Math.cos(sLat2) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
 
-function estimateFare(distanceKm, vehicleType) {
-  const baseFare = vehicleType === 'Bike' ? 35 : 60;
-  const perKm = vehicleType === 'Bike' ? 9 : 14;
-  return Number((baseFare + perKm * Number(distanceKm || 0)).toFixed(2));
+  return Number((2 * earthRadiusKm * Math.asin(Math.sqrt(h))).toFixed(2));
 }
 
 export default function PostRide() {
-  const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
-  const { isLoaded, loadError } = useLoadScript({
-    googleMapsApiKey: apiKey || '',
-    libraries,
-  });
-
-  const [activeField, setActiveField] = useState('pickup');
-  const [pickup, setPickup] = useState(null);
-  const [drop, setDrop] = useState(null);
-  const [pickupInput, setPickupInput] = useState('');
-  const [dropInput, setDropInput] = useState('');
-  const [routeSummary, setRouteSummary] = useState(null);
+  const [startLocation, setStartLocation] = useState({});
+  const [endLocation, setEndLocation] = useState({});
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [form, setForm] = useState({
-    dateTime: '',
+    date: '',
+    time: '',
     vehicleType: 'Car',
-    seatsAvailable: 1,
-    totalFuelCost: 0,
-    tollCharges: 0,
+    seatsAvailable: '1',
+    luggageAllowed: true,
+    pricePerSeat: '',
+    genderPreference: 'any',
+    allowPreRideChat: true,
+    musicPreference: [],
   });
 
-  const estimatedFare = useMemo(
-    () => estimateFare(routeSummary?.distanceKm, form.vehicleType),
-    [routeSummary?.distanceKm, form.vehicleType]
+  const hasCoordinates = isValidLatLng(startLocation) && isValidLatLng(endLocation);
+  const distanceKm = useMemo(() => haversineKm(startLocation, endLocation), [startLocation, endLocation]);
+  const etaMinutes = useMemo(() => (distanceKm ? Math.max(1, Math.round(distanceKm * 2.2)) : 0), [distanceKm]);
+  const estimatedFare = useMemo(() => {
+    if (!distanceKm) return 0;
+    const perKm = PRICE_PER_KM_BY_VEHICLE[form.vehicleType] || PRICE_PER_KM_BY_VEHICLE.Car;
+    return Number((distanceKm * perKm).toFixed(0));
+  }, [distanceKm, form.vehicleType]);
+
+  const canPost = Boolean(
+    hasCoordinates && form.date && form.time && Number(form.pricePerSeat) > 0 && !submitting
   );
 
-  const hasCoordinates = Boolean(pickup?.lat && pickup?.lng && drop?.lat && drop?.lng);
-  const canPost = Boolean(hasCoordinates && form.dateTime && !submitting);
-
-  const updateField = (field, location) => {
-    if (field === 'pickup') {
-      setPickup(location);
-      setPickupInput(location.formattedAddress || location.address || '');
-    } else {
-      setDrop(location);
-      setDropInput(location.formattedAddress || location.address || '');
-    }
-    setError('');
+  const toggleMusicPreference = (genre) => {
+    setForm((prev) => {
+      const exists = prev.musicPreference.includes(genre);
+      return {
+        ...prev,
+        musicPreference: exists
+          ? prev.musicPreference.filter((entry) => entry !== genre)
+          : [...prev.musicPreference, genre],
+      };
+    });
   };
 
-  const handleUseCurrentLocation = async (field) => {
-    try {
-      setError('');
-      if (!window.google?.maps) return;
-
-      const current = await getCurrentPosition();
-      const lat = current.coords.latitude;
-      const lng = current.coords.longitude;
-      const geocoder = new window.google.maps.Geocoder();
-      try {
-        const top = await reverseGeocode(geocoder, lat, lng);
-        const formatted = formatCityStateCountry(top);
-        updateField(field, {
-          formattedAddress: formatted,
-          address: formatted,
-          lat,
-          lng,
-          placeId: top.place_id || '',
-        });
-      } catch (geoError) {
-        // Graceful fallback: keep precise coordinates even if geocoding API fails.
-        const fallbackAddress = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
-        updateField(field, {
-          formattedAddress: fallbackAddress,
-          address: fallbackAddress,
-          lat,
-          lng,
-          placeId: '',
-        });
-        setError(
-          'Current location captured, but address lookup failed. Enable Geocoding API + billing in Google Cloud.'
-        );
-        console.error(geoError);
-      }
-    } catch (positionError) {
-      console.error(positionError);
-      setError('Unable to fetch current location. Allow location access and try again.');
-    }
-  };
-
-  const handleMapLocationSelect = (field, location) => {
-    updateField(field, location);
+  const autoCalculatePrice = () => {
+    if (!estimatedFare) return;
+    setForm((prev) => ({ ...prev, pricePerSeat: String(estimatedFare) }));
   };
 
   const submit = async (event) => {
@@ -148,20 +93,25 @@ export default function PostRide() {
       await api.post('/rides', {
         startLocation: {
           type: 'Point',
-          name: pickup.formattedAddress,
-          coordinates: [pickup.lng, pickup.lat],
+          name: startLocation.formattedAddress || startLocation.address || 'Pickup',
+          coordinates: [Number(startLocation.lng), Number(startLocation.lat)],
         },
         endLocation: {
           type: 'Point',
-          name: drop.formattedAddress,
-          coordinates: [drop.lng, drop.lat],
+          name: endLocation.formattedAddress || endLocation.address || 'Drop',
+          coordinates: [Number(endLocation.lng), Number(endLocation.lat)],
         },
-        dateTime: form.dateTime,
+        date: form.date,
+        time: form.time,
+        dateTime: `${form.date}T${form.time}`,
         vehicleType: form.vehicleType,
         seatsAvailable: Number(form.seatsAvailable),
-        totalFuelCost: Number(form.totalFuelCost),
-        tollCharges: Number(form.tollCharges),
-        distanceKm: Number(routeSummary?.distanceKm || 0),
+        pricePerSeat: Number(form.pricePerSeat),
+        luggageAllowed: Boolean(form.luggageAllowed),
+        genderPreference: form.genderPreference,
+        musicPreference: form.musicPreference,
+        allowPreRideChat: Boolean(form.allowPreRideChat),
+        distanceKm: Number(distanceKm || 0),
       });
 
       setMessage('Ride posted successfully');
@@ -172,9 +122,6 @@ export default function PostRide() {
     }
   };
 
-  if (!apiKey) return <p className="text-red-600">Missing VITE_GOOGLE_MAPS_API_KEY in client/.env.</p>;
-  if (loadError) return <p className="text-red-600">Google Maps failed to load. Check API key + billing.</p>;
-
   return (
     <div className="max-w-6xl mx-auto space-y-4">
       <Link to="/dashboard" className="inline-flex items-center gap-2 text-slate-700 font-medium">
@@ -184,110 +131,186 @@ export default function PostRide() {
       <form onSubmit={submit} className="glass-card p-7 space-y-6">
         <header>
           <h2 className="text-5xl font-extrabold">Post a Ride</h2>
-          <p className="text-xl text-slate-500 mt-1">Select pickup and drop with real Google location selection.</p>
+          <p className="text-xl text-slate-500 mt-1">Create a complete ride listing with route, timing, and preferences.</p>
         </header>
 
-        <div className="flex gap-2 rounded-full bg-slate-100 p-1 w-fit">
-          <button
-            type="button"
-            className={`px-4 py-1.5 rounded-full text-sm ${activeField === 'pickup' ? 'bg-white border border-slate-300' : 'text-slate-600'}`}
-            onClick={() => setActiveField('pickup')}
-          >
-            Map Click: Pickup
-          </button>
-          <button
-            type="button"
-            className={`px-4 py-1.5 rounded-full text-sm ${activeField === 'drop' ? 'bg-white border border-slate-300' : 'text-slate-600'}`}
-            onClick={() => setActiveField('drop')}
-          >
-            Map Click: Drop
-          </button>
-        </div>
-
-        <div className="grid md:grid-cols-2 gap-4">
-          <LocationPicker
-            label="Pickup location"
-            value={pickupInput}
-            placeholder="Enter pickup address"
-            isLoaded={isLoaded}
-            onFocus={() => setActiveField('pickup')}
-            onInputChange={setPickupInput}
-            onPlaceSelected={(location) => updateField('pickup', location)}
-            onUseCurrentLocation={() => handleUseCurrentLocation('pickup')}
-          />
-          <LocationPicker
-            label="Drop location"
-            value={dropInput}
-            placeholder="Enter drop address"
-            isLoaded={isLoaded}
-            onFocus={() => setActiveField('drop')}
-            onInputChange={setDropInput}
-            onPlaceSelected={(location) => updateField('drop', location)}
-            onUseCurrentLocation={() => handleUseCurrentLocation('drop')}
-          />
-        </div>
-
-        <p className="text-sm text-slate-500">Please select suggestion or use current location.</p>
-
-        <Map
-          isLoaded={isLoaded}
-          pickup={pickup}
-          drop={drop}
-          activeField={activeField}
-          onMapLocationSelect={handleMapLocationSelect}
-          onRouteSummary={setRouteSummary}
-        />
-
-        <section className="rounded-2xl border border-slate-200 bg-white p-4">
-          <p className="font-semibold mb-2">Trip Summary</p>
-          <p className="text-sm text-slate-700">{pickupInput || 'Pickup'} to {dropInput || 'Drop'}</p>
-          <p className="text-sm text-slate-700">Distance: {routeSummary ? `${routeSummary.distanceKm} km` : '-'}</p>
-          <p className="text-sm text-slate-700">ETA: {routeSummary ? `${routeSummary.etaMinutes} min` : '-'}</p>
-          <p className="text-sm text-slate-700">Estimated fare: INR {routeSummary ? estimatedFare : '-'}</p>
+        <section className="space-y-3">
+          <h3 className="text-2xl font-bold">Route Selection</h3>
+          <div className="grid md:grid-cols-2 gap-4">
+            <LocationPicker
+              label="Pickup location"
+              placeholder="Search pickup address"
+              onLocationSelect={setStartLocation}
+              initialLocation={startLocation}
+            />
+            <LocationPicker
+              label="Drop location"
+              placeholder="Search drop address"
+              onLocationSelect={setEndLocation}
+              initialLocation={endLocation}
+            />
+          </div>
         </section>
 
         <section className="space-y-3">
-          <h3 className="text-2xl font-bold">Ride Details</h3>
-          <div className="rounded-3xl border border-slate-300 p-5 grid md:grid-cols-3 gap-4">
-            <input
-              className="soft-input"
-              type="datetime-local"
-              value={form.dateTime}
-              onChange={(e) => setForm((prev) => ({ ...prev, dateTime: e.target.value }))}
-              required
-            />
-            <select
-              className="soft-input"
-              value={form.vehicleType}
-              onChange={(e) => setForm((prev) => ({ ...prev, vehicleType: e.target.value }))}
-            >
-              <option value="Car">Car</option>
-              <option value="Bike">Bike</option>
-            </select>
-            <input
-              className="soft-input"
-              type="number"
-              min="1"
-              value={form.seatsAvailable}
-              onChange={(e) => setForm((prev) => ({ ...prev, seatsAvailable: e.target.value }))}
-            />
-            <input
-              className="soft-input"
-              type="number"
-              min="0"
-              placeholder="Fuel cost"
-              value={form.totalFuelCost}
-              onChange={(e) => setForm((prev) => ({ ...prev, totalFuelCost: e.target.value }))}
-            />
-            <input
-              className="soft-input"
-              type="number"
-              min="0"
-              placeholder="Toll charges"
-              value={form.tollCharges}
-              onChange={(e) => setForm((prev) => ({ ...prev, tollCharges: e.target.value }))}
-            />
+          <h3 className="text-2xl font-bold">Date and Time</h3>
+          <div className="rounded-3xl border border-slate-300 p-5 grid md:grid-cols-2 gap-4">
+            <div className="space-y-1">
+              <label className="text-sm font-semibold text-slate-700">Ride date</label>
+              <input
+                className="soft-input"
+                type="date"
+                value={form.date}
+                onChange={(e) => setForm((prev) => ({ ...prev, date: e.target.value }))}
+                required
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm font-semibold text-slate-700">Departure time</label>
+              <input
+                className="soft-input"
+                type="time"
+                value={form.time}
+                onChange={(e) => setForm((prev) => ({ ...prev, time: e.target.value }))}
+                required
+              />
+            </div>
           </div>
+        </section>
+
+        <section className="space-y-3">
+          <h3 className="text-2xl font-bold">Vehicle Information</h3>
+          <div className="rounded-3xl border border-slate-300 p-5 grid md:grid-cols-3 gap-4">
+            <div className="space-y-1">
+              <label className="text-sm font-semibold text-slate-700">Vehicle type</label>
+              <select
+                className="soft-input"
+                value={form.vehicleType}
+                onChange={(e) => setForm((prev) => ({ ...prev, vehicleType: e.target.value }))}
+              >
+                {VEHICLE_OPTIONS.map((vehicle) => (
+                  <option key={vehicle} value={vehicle}>
+                    {vehicle}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm font-semibold text-slate-700">Available seats</label>
+              <select
+                className="soft-input"
+                value={form.seatsAvailable}
+                onChange={(e) => setForm((prev) => ({ ...prev, seatsAvailable: e.target.value }))}
+              >
+                {SEAT_OPTIONS.map((seat) => (
+                  <option key={seat} value={seat}>
+                    {seat}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm font-semibold text-slate-700">Luggage allowed</label>
+              <select
+                className="soft-input"
+                value={form.luggageAllowed ? 'yes' : 'no'}
+                onChange={(e) => setForm((prev) => ({ ...prev, luggageAllowed: e.target.value === 'yes' }))}
+              >
+                <option value="yes">Yes</option>
+                <option value="no">No</option>
+              </select>
+            </div>
+          </div>
+        </section>
+
+        <section className="space-y-3">
+          <h3 className="text-2xl font-bold">Pricing</h3>
+          <div className="rounded-3xl border border-slate-300 p-5 grid md:grid-cols-[1fr_auto] gap-4 items-end">
+            <div className="space-y-1">
+              <label className="text-sm font-semibold text-slate-700">Price per seat (INR)</label>
+              <input
+                className="soft-input"
+                type="number"
+                min="1"
+                step="1"
+                placeholder="Enter fare per seat"
+                value={form.pricePerSeat}
+                onChange={(e) => setForm((prev) => ({ ...prev, pricePerSeat: e.target.value }))}
+                required
+              />
+            </div>
+            <button
+              type="button"
+              onClick={autoCalculatePrice}
+              className="px-4 py-2 rounded-full border border-slate-300 bg-slate-50 hover:bg-slate-100"
+              disabled={!distanceKm}
+            >
+              Auto-calculate from distance
+            </button>
+          </div>
+        </section>
+
+        <section className="space-y-3">
+          <h3 className="text-2xl font-bold">Compatibility Preferences</h3>
+          <div className="rounded-3xl border border-slate-300 p-5 space-y-4">
+            <div className="space-y-2">
+              <label className="text-sm font-semibold text-slate-700">Music preference</label>
+              <div className="flex flex-wrap gap-2">
+                {MUSIC_OPTIONS.map((genre) => {
+                  const selected = form.musicPreference.includes(genre);
+                  return (
+                    <button
+                      key={genre}
+                      type="button"
+                      onClick={() => toggleMusicPreference(genre)}
+                      className={`px-3 py-1 rounded-full border text-sm ${
+                        selected
+                          ? 'bg-indigo-600 text-white border-indigo-600'
+                          : 'bg-white text-slate-700 border-slate-300'
+                      }`}
+                    >
+                      {genre}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="grid md:grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <label className="text-sm font-semibold text-slate-700">Gender preference</label>
+                <select
+                  className="soft-input"
+                  value={form.genderPreference}
+                  onChange={(e) => setForm((prev) => ({ ...prev, genderPreference: e.target.value }))}
+                >
+                  <option value="any">Any</option>
+                  <option value="male">Male only</option>
+                  <option value="female">Female only</option>
+                </select>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-sm font-semibold text-slate-700">Allow pre-ride chat</label>
+                <select
+                  className="soft-input"
+                  value={form.allowPreRideChat ? 'yes' : 'no'}
+                  onChange={(e) => setForm((prev) => ({ ...prev, allowPreRideChat: e.target.value === 'yes' }))}
+                >
+                  <option value="yes">Yes</option>
+                  <option value="no">No</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 text-sm text-slate-700">
+          <p className="font-semibold mb-1">Trip Summary</p>
+          <p>{(startLocation.formattedAddress || 'Pickup')} to {(endLocation.formattedAddress || 'Drop')}</p>
+          <p>Distance: {distanceKm ? `${distanceKm} km` : '-'}</p>
+          <p>ETA: {etaMinutes ? `${etaMinutes} min` : '-'}</p>
+          <p>Estimated fare per seat: {estimatedFare ? `INR ${estimatedFare}` : '-'}</p>
         </section>
 
         {message && <p className="text-green-600 font-medium">{message}</p>}

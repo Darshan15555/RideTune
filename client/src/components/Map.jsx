@@ -1,172 +1,118 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { GoogleMap, Marker, Polyline } from '@react-google-maps/api';
+import { useEffect, useMemo, useState } from 'react';
+import { MapContainer, Marker, Polyline, TileLayer, useMapEvents } from 'react-leaflet';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png';
+import markerIcon from 'leaflet/dist/images/marker-icon.png';
+import markerShadow from 'leaflet/dist/images/marker-shadow.png';
 
-const defaultCenter = { lat: 20.5937, lng: 78.9629 };
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: markerIcon2x,
+  iconUrl: markerIcon,
+  shadowUrl: markerShadow,
+});
 
-const uberLightStyle = [
-  { featureType: 'poi', stylers: [{ visibility: 'off' }] },
-  { featureType: 'transit', stylers: [{ visibility: 'off' }] },
-  { featureType: 'road', elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
-  { featureType: 'water', stylers: [{ color: '#e0f2fe' }] },
-  { featureType: 'landscape', stylers: [{ color: '#f8fafc' }] },
-];
+const defaultCenter = { lat: 20, lng: 78 };
 
-function toRouteSummary(response) {
-  const route = response.routes?.[0];
-  if (!route) return null;
-
-  const distanceMeters = (route.legs || []).reduce((sum, leg) => sum + Number(leg.distance?.value || 0), 0);
-  const durationSeconds = (route.legs || []).reduce((sum, leg) => sum + Number(leg.duration?.value || 0), 0);
-
-  return {
-    polyline: (route.overview_path || []).map((point) => ({ lat: point.lat(), lng: point.lng() })),
-    distanceKm: Number((distanceMeters / 1000).toFixed(2)),
-    etaMinutes: Math.max(1, Math.round(durationSeconds / 60)),
-  };
+function isValidLatLng(location) {
+  return Number.isFinite(Number(location?.lat)) && Number.isFinite(Number(location?.lng));
 }
 
-export default function Map({
-  isLoaded,
-  pickup,
-  drop,
-  activeField,
-  onMapLocationSelect,
-  onRouteSummary,
-}) {
-  const mapRef = useRef(null);
-  const geocoderRef = useRef(null);
+function haversineKm(a, b) {
+  const toRadians = (degrees) => (degrees * Math.PI) / 180;
+  const dLat = toRadians(Number(b.lat) - Number(a.lat));
+  const dLng = toRadians(Number(b.lng) - Number(a.lng));
+  const lat1 = toRadians(Number(a.lat));
+  const lat2 = toRadians(Number(b.lat));
+  const earthRadiusKm = 6371;
+
+  const h =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+
+  return Number((2 * earthRadiusKm * Math.asin(Math.sqrt(h))).toFixed(2));
+}
+
+function MapClickHandler({ activeField, onMapLocationSelect }) {
+  useMapEvents({
+    click(event) {
+      const lat = Number(event.latlng?.lat);
+      const lng = Number(event.latlng?.lng);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+      onMapLocationSelect?.(activeField, {
+        lat,
+        lng,
+        formattedAddress: `${lat.toFixed(6)}, ${lng.toFixed(6)}`,
+        address: `${lat.toFixed(6)}, ${lng.toFixed(6)}`,
+      });
+    },
+  });
+
+  return null;
+}
+
+export default function Map({ pickup, drop, activeField, onMapLocationSelect, onRouteSummary }) {
   const [polylinePath, setPolylinePath] = useState([]);
-
-  const center = useMemo(() => pickup || drop || defaultCenter, [pickup, drop]);
+  const [currentLocation, setCurrentLocation] = useState(null);
+  const safePickup = useMemo(
+    () => (isValidLatLng(pickup) ? { lat: Number(pickup.lat), lng: Number(pickup.lng) } : null),
+    [pickup]
+  );
+  const safeDrop = useMemo(
+    () => (isValidLatLng(drop) ? { lat: Number(drop.lat), lng: Number(drop.lng) } : null),
+    [drop]
+  );
+  const center = useMemo(() => {
+    if (isValidLatLng(safePickup)) return safePickup;
+    if (isValidLatLng(safeDrop)) return safeDrop;
+    if (isValidLatLng(currentLocation)) return currentLocation;
+    return defaultCenter;
+  }, [safePickup, safeDrop, currentLocation]);
 
   useEffect(() => {
-    if (!isLoaded || !window.google?.maps) return;
-    geocoderRef.current = new window.google.maps.Geocoder();
-  }, [isLoaded]);
-
-  useEffect(() => {
-    if (!window.google?.maps || !pickup || !drop) {
-      setPolylinePath([]);
-      onRouteSummary(null);
+    if (!navigator.geolocation) {
+      setCurrentLocation(defaultCenter);
       return;
     }
 
-    const directionsService = new window.google.maps.DirectionsService();
-    directionsService.route(
-      {
-        origin: { lat: pickup.lat, lng: pickup.lng },
-        destination: { lat: drop.lat, lng: drop.lng },
-        travelMode: window.google.maps.TravelMode.DRIVING,
-      },
-      (response, status) => {
-        console.log('direction response', response);
-        if (status !== 'OK' || !response) {
-          setPolylinePath([]);
-          onRouteSummary(null);
-          return;
-        }
-
-        const summary = toRouteSummary(response);
-        setPolylinePath(summary?.polyline || []);
-        onRouteSummary(summary);
-
-        const bounds = new window.google.maps.LatLngBounds();
-        bounds.extend({ lat: pickup.lat, lng: pickup.lng });
-        bounds.extend({ lat: drop.lat, lng: drop.lng });
-        mapRef.current?.fitBounds(bounds);
-      }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => setCurrentLocation({ lat: Number(pos.coords.latitude), lng: Number(pos.coords.longitude) }),
+      () => setCurrentLocation(defaultCenter),
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }
     );
-  }, [pickup?.lat, pickup?.lng, drop?.lat, drop?.lng]);
+  }, []);
 
-  const handleMapClick = (event) => {
-    const lat = event.latLng?.lat?.();
-    const lng = event.latLng?.lng?.();
-    if (!Number.isFinite(lat) || !Number.isFinite(lng) || !geocoderRef.current) return;
+  useEffect(() => {
+    if (!safePickup || !safeDrop) {
+      setPolylinePath([]);
+      onRouteSummary?.(null);
+      return;
+    }
 
-    const latLng = new window.google.maps.LatLng(lat, lng);
-    geocoderRef.current.geocode({ location: latLng }, (results, status) => {
-      if (status !== 'OK' || !results?.length) return;
-
-      const top = results[0];
-      const selected = {
-        formattedAddress: top.formatted_address || '',
-        address: top.formatted_address || '',
-        lat,
-        lng,
-        placeId: top.place_id || '',
-      };
-
-      onMapLocationSelect(activeField, selected);
-
-      mapRef.current?.panTo({ lat, lng });
-      mapRef.current?.setZoom(15);
-    });
-  };
-
-  if (!isLoaded) {
-    return <p className="text-slate-500 text-sm">Loading map...</p>;
-  }
+    const distanceKm = haversineKm(safePickup, safeDrop);
+    const etaMinutes = Math.max(1, Math.round(distanceKm * 2.2));
+    const nextPath = [safePickup, safeDrop];
+    setPolylinePath(nextPath);
+    onRouteSummary?.({ polyline: nextPath, distanceKm, etaMinutes });
+  }, [safePickup?.lat, safePickup?.lng, safeDrop?.lat, safeDrop?.lng, onRouteSummary]);
 
   return (
     <div className="h-[420px] w-full rounded-2xl overflow-hidden border border-slate-300">
-      <GoogleMap
-        mapContainerStyle={{ width: '100%', height: '100%' }}
-        center={center}
-        zoom={12}
-        onLoad={(map) => {
-          mapRef.current = map;
-        }}
-        onClick={handleMapClick}
-        options={{
-          styles: uberLightStyle,
-          zoomControl: true,
-          streetViewControl: false,
-          mapTypeControl: false,
-          fullscreenControl: false,
-          clickableIcons: false,
-        }}
-      >
-        {pickup && (
-          <Marker
-            position={{ lat: pickup.lat, lng: pickup.lng }}
-            label={{ text: 'P', color: '#ffffff', fontWeight: '700' }}
-            icon={{
-              path: window.google.maps.SymbolPath.CIRCLE,
-              fillColor: '#16a34a',
-              fillOpacity: 1,
-              strokeColor: '#ffffff',
-              strokeWeight: 2,
-              scale: 8,
-            }}
-          />
-        )}
-
-        {drop && (
-          <Marker
-            position={{ lat: drop.lat, lng: drop.lng }}
-            label={{ text: 'D', color: '#ffffff', fontWeight: '700' }}
-            icon={{
-              path: window.google.maps.SymbolPath.CIRCLE,
-              fillColor: '#dc2626',
-              fillOpacity: 1,
-              strokeColor: '#ffffff',
-              strokeWeight: 2,
-              scale: 8,
-            }}
-          />
-        )}
-
-        {polylinePath.length > 0 && (
-          <Polyline
-            path={polylinePath}
-            options={{
-              strokeColor: '#2563eb',
-              strokeOpacity: 0.95,
-              strokeWeight: 6,
-            }}
-          />
-        )}
-      </GoogleMap>
+      {isValidLatLng(center) && (
+        <MapContainer center={[center.lat, center.lng]} zoom={12} style={{ width: '100%', height: '100%' }}>
+          <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+          <MapClickHandler activeField={activeField} onMapLocationSelect={onMapLocationSelect} />
+          {safePickup && <Marker position={[safePickup.lat, safePickup.lng]} />}
+          {safeDrop && <Marker position={[safeDrop.lat, safeDrop.lng]} />}
+          {polylinePath.length > 0 && (
+            <Polyline
+              positions={polylinePath.map((point) => [point.lat, point.lng])}
+              pathOptions={{ color: '#2563eb', opacity: 0.95, weight: 6 }}
+            />
+          )}
+        </MapContainer>
+      )}
     </div>
   );
 }

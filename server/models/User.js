@@ -38,6 +38,8 @@ const userSchema = new mongoose.Schema(
     ageRange: { type: ageRangeSchema, default: () => ({}) },
     travelPurpose: { type: String, enum: ['work', 'study', 'leisure', 'mixed'], default: 'mixed' },
     emergencyContacts: [{ name: String, phone: String }],
+    ratingAverage: { type: Number, min: 0, max: 5, default: 0 },
+    totalReviews: { type: Number, min: 0, default: 0 },
     averageRating: { type: Number, min: 0, max: 5, default: 0 },
     totalRatings: { type: Number, min: 0, default: 0 },
     fraudFlags: { type: Number, min: 0, default: 0 },
