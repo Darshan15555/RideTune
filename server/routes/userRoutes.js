@@ -29,7 +29,7 @@ router.get('/analytics', authMiddleware, async (req, res) => {
   const totalRides = completed.length;
   const distanceTravelled = completed.reduce((sum, item) => sum + Number(item.ride?.distanceKm || 0), 0);
 
-  const requests = await Request.find({ passenger: req.user.id, status: 'accepted' }).populate('ride', 'totalFuelCost tollCharges');
+  const requests = await Request.find({ passenger: req.user.id, status: 'ACCEPTED' }).populate('ride', 'totalFuelCost tollCharges');
   const moneySaved = requests.reduce((sum, item) => {
     const totalCost = Number(item.ride?.totalFuelCost || 0) + Number(item.ride?.tollCharges || 0);
     return sum + totalCost * 0.4;
@@ -47,7 +47,7 @@ router.get('/analytics', authMiddleware, async (req, res) => {
 });
 
 router.get('/suggestions', authMiddleware, async (req, res) => {
-  const previousRequests = await Request.find({ passenger: req.user.id, status: { $in: ['accepted', 'pending'] } })
+  const previousRequests = await Request.find({ passenger: req.user.id, status: { $in: ['ACCEPTED', 'PENDING'] } })
     .populate('ride', 'startLocation endLocation')
     .sort({ createdAt: -1 })
     .limit(5);
@@ -128,7 +128,10 @@ router.post('/reviews', authMiddleware, async (req, res) => {
     totalRatings: aggregate.count,
   });
 
-  await req.app.locals.notify?.(review.reviewee, 'review', 'You received a new rating and review.');
+  await req.app.locals.notify?.(review.reviewee, 'REVIEW', 'You received a new rating and review.', {
+    ride: session.ride,
+    fromUser: req.user.id,
+  });
 
   return res.status(201).json(review);
 });

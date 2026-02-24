@@ -10,10 +10,24 @@ router.get('/', authMiddleware, async (req, res) => {
   return res.json(notifications);
 });
 
+router.patch('/:id/read', authMiddleware, validateObjectIdParam('id'), async (req, res) => {
+  const notification = await Notification.findOneAndUpdate(
+    { _id: req.params.id, user: req.user.id },
+    { isRead: true },
+    { new: true }
+  );
+
+  if (!notification) {
+    return res.status(404).json({ message: 'Notification not found' });
+  }
+
+  return res.json(notification);
+});
+
 router.put('/:id/read', authMiddleware, validateObjectIdParam('id'), async (req, res) => {
   const notification = await Notification.findOneAndUpdate(
     { _id: req.params.id, user: req.user.id },
-    { read: true },
+    { isRead: true },
     { new: true }
   );
 

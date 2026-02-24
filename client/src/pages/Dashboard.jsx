@@ -6,7 +6,8 @@ const items = [
   { to: '/profile', title: 'My Profile', desc: 'View, edit, and share your public profile', icon: 'P', tone: 'from-rose-500 to-orange-400' },
   { to: '/post-ride', title: 'Post Ride', desc: 'Share your journey and find compatible travelers', icon: '+', tone: 'from-purple-500 to-indigo-400' },
   { to: '/search-ride', title: 'Search Rides', desc: 'Find rides matching your route and interests', icon: 'S', tone: 'from-cyan-500 to-sky-400' },
-  { to: '/requests', title: 'My Requests', desc: 'View and manage your ride requests', icon: 'R', tone: 'from-pink-500 to-fuchsia-400' },
+  { to: '/my-rides', title: 'My Rides', desc: 'Manage posted rides, statuses, and incoming requests', icon: 'M', tone: 'from-violet-500 to-purple-400' },
+  { to: '/my-requests', title: 'My Requests', desc: 'Track passenger requests and open chat for accepted rides', icon: 'R', tone: 'from-pink-500 to-fuchsia-400' },
   { to: '/history', title: 'Ride History', desc: 'Track completed rides and reviews', icon: 'H', tone: 'from-emerald-500 to-lime-400' },
 ];
 

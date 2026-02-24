@@ -28,7 +28,17 @@ const rideSchema = new mongoose.Schema(
     time: { type: String, required: true },
     dateTime: { type: Date, required: true },
     vehicleType: { type: String, enum: ['Car', 'Bike', 'SUV'], required: true },
-    seatsAvailable: { type: Number, min: 1, max: 6, required: true },
+    seatsAvailable: { type: Number, min: 0, max: 6, required: true },
+    status: {
+      type: String,
+      enum: ['ACTIVE', 'FULL', 'COMPLETED', 'CANCELLED'],
+      default: 'ACTIVE',
+    },
+    fuelType: { type: String, enum: ['PETROL', 'DIESEL', 'EV'], default: 'PETROL' },
+    mileage: { type: Number, min: 1, default: 15 },
+    fuelPrice: { type: Number, min: 0, default: 102 },
+    autoCalculatedPricePerSeat: { type: Number, min: 0, default: 0 },
+    pricingMarginPercent: { type: Number, min: 0, max: 10, default: 5 },
     pricePerSeat: { type: Number, min: 0, required: true },
     luggageAllowed: { type: Boolean, default: false },
     genderPreference: { type: String, enum: ['any', 'male', 'female'], default: 'any' },
@@ -42,6 +52,7 @@ const rideSchema = new mongoose.Schema(
       default: [],
     },
     allowPreRideChat: { type: Boolean, default: true },
+    compatibilityScore: { type: Number, min: 0, max: 100, default: 0 },
     totalFuelCost: { type: Number, min: 0, default: 0 },
     tollCharges: { type: Number, min: 0, default: 0 },
     distanceKm: { type: Number, min: 0, default: 0 },
@@ -77,5 +88,6 @@ rideSchema.index({ startLocation: '2dsphere' });
 rideSchema.index({ endLocation: '2dsphere' });
 rideSchema.index({ pickupLocation: '2dsphere' });
 rideSchema.index({ dropLocation: '2dsphere' });
+rideSchema.index({ status: 1, dateTime: 1, vehicleType: 1, pricePerSeat: 1 });
 
 export default mongoose.model('Ride', rideSchema);

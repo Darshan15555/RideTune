@@ -71,10 +71,9 @@ export default function LocationPicker({ label, placeholder, onLocationSelect, i
     return defaultCenter;
   }, [position, currentLocation]);
   const markerLocation = useMemo(() => {
-    if (isValidLatLng(position)) return { lat: Number(position.lat), lng: Number(position.lng) };
-    if (isValidLatLng(currentLocation)) return { lat: Number(currentLocation.lat), lng: Number(currentLocation.lng) };
-    return null;
-  }, [position, currentLocation]);
+    if (!isValidLatLng(position)) return null;
+    return { lat: Number(position.lat), lng: Number(position.lng) };
+  }, [position]);
 
   useEffect(() => {
     if (!navigator.geolocation) {

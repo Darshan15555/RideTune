@@ -5,7 +5,8 @@ const requestSchema = new mongoose.Schema(
     ride: { type: mongoose.Schema.Types.ObjectId, ref: 'Ride', required: true },
     passenger: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     driver: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-    status: { type: String, enum: ['pending', 'accepted', 'rejected'], default: 'pending' },
+    seatsRequested: { type: Number, min: 1, max: 6, default: 1 },
+    status: { type: String, enum: ['PENDING', 'ACCEPTED', 'REJECTED', 'CANCELLED'], default: 'PENDING' },
   },
   { timestamps: true }
 );

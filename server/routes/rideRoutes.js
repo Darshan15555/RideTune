@@ -9,6 +9,11 @@ import rateLimitRideSearch from '../middleware/rateLimitRideSearch.js';
 import { calculateRouteOverlap } from '../utils/routeMatch.js';
 
 const router = express.Router();
+const DEFAULT_FUEL_PRICE = {
+  PETROL: 102,
+  DIESEL: 90,
+  EV: 12,
+};
 
 function buildRoutePoints(ride) {
   return [
@@ -16,6 +21,40 @@ function buildRoutePoints(ride) {
     ...(ride.stops || []).map((stop) => stop.coordinates),
     ride.endLocation?.coordinates,
   ].filter(Boolean);
+}
+
+function nearestDistanceKmToRoute(point = [], route = []) {
+  if (!Array.isArray(point) || point.length !== 2 || !Array.isArray(route) || !route.length) return Infinity;
+  let min = Infinity;
+  for (const candidate of route) {
+    if (!Array.isArray(candidate) || candidate.length !== 2) continue;
+    const distance = haversineKm(point, candidate);
+    if (distance < min) min = distance;
+  }
+  return min;
+}
+
+function vectorFromPoints([lng1, lat1], [lng2, lat2]) {
+  return [Number(lng2) - Number(lng1), Number(lat2) - Number(lat1)];
+}
+
+function vectorMagnitude([x, y]) {
+  return Math.sqrt(x * x + y * y);
+}
+
+function angleBetweenVectorsDeg(v1 = [0, 0], v2 = [0, 0]) {
+  const dot = v1[0] * v2[0] + v1[1] * v2[1];
+  const mag = vectorMagnitude(v1) * vectorMagnitude(v2);
+  if (!mag) return 180;
+  const cosTheta = Math.max(-1, Math.min(1, dot / mag));
+  return (Math.acos(cosTheta) * 180) / Math.PI;
+}
+
+async function expirePastRides() {
+  await Ride.updateMany(
+    { dateTime: { $lt: new Date() }, status: { $in: ['ACTIVE', 'FULL'] } },
+    { $set: { status: 'COMPLETED' } }
+  );
 }
 
 function normalizeSearchPayload(body = {}) {
@@ -30,13 +69,18 @@ function normalizeSearchPayload(body = {}) {
   const passengerStops = Array.isArray(body.stops) ? body.stops : [];
 
   const filters = {
+    includeOwnRides:
+      body.includeOwnRides === true || String(body.includeOwnRides || '').toLowerCase() === 'true',
     vehicleType: body.vehicleType || '',
     genderPreference: body.genderPreference || '',
-    minCompatibilityScore: Number(body.minCompatibilityScore ?? 0),
-    maxPrice: Number(body.maxPrice ?? 0),
+    minCompatibilityScore: Number.isFinite(Number(body.minCompatibility ?? body.minCompatibilityScore))
+      ? Number(body.minCompatibility ?? body.minCompatibilityScore)
+      : 0,
+    maxPrice: Number.isFinite(Number(body.maxPrice)) ? Number(body.maxPrice) : 0,
     searchDate: body.date || '',
     timeWindow: body.timeWindow || '',
-    proximityKm: Number(body.proximityKm ?? 15),
+    proximityKm: Number.isFinite(Number(body.proximityKm)) ? Number(body.proximityKm) : null,
+    maxDistanceMeters: Number.isFinite(Number(body.maxDistanceMeters)) ? Number(body.maxDistanceMeters) : 200000,
     preferredDateTime: body.preferredDateTime ? new Date(body.preferredDateTime) : null,
   };
 
@@ -51,6 +95,7 @@ function normalizeSearchPayload(body = {}) {
 }
 
 async function searchRidesForUser(userId, payload = {}) {
+  await expirePastRides();
   const {
     startLongitude,
     startLatitude,
@@ -69,34 +114,45 @@ async function searchRidesForUser(userId, payload = {}) {
     return { error: { status: 401, message: 'User not found' } };
   }
 
-  const nearDistanceMeters = Math.max(1000, Number(filters.proximityKm || 15) * 1000);
-  const now = new Date();
-  const rideDateFilter = { $gte: now };
+  const nearDistanceMeters =
+    Number(filters.proximityKm) > 0
+      ? Number(filters.proximityKm) * 1000
+      : Number(filters.maxDistanceMeters) > 0
+        ? Number(filters.maxDistanceMeters)
+        : 200000;
+  console.log('Using pickup:', startLongitude, startLatitude);
+
+  const geoNearQuery = {
+    seatsAvailable: { $gt: 0 },
+    status: 'ACTIVE',
+  };
+  if (!filters.includeOwnRides) {
+    geoNearQuery.driver = { $ne: userId };
+  }
 
   if (filters.searchDate) {
-    const dayStart = new Date(`${filters.searchDate}T00:00:00`);
-    const dayEnd = new Date(`${filters.searchDate}T23:59:59`);
-    if (!Number.isNaN(dayStart.getTime()) && !Number.isNaN(dayEnd.getTime())) {
-      rideDateFilter.$gte = dayStart;
-      rideDateFilter.$lte = dayEnd;
-
+    const startOfDay = new Date(`${filters.searchDate}T00:00:00`);
+    const endOfDay = new Date(`${filters.searchDate}T23:59:59.999`);
+    if (!Number.isNaN(startOfDay.getTime()) && !Number.isNaN(endOfDay.getTime())) {
+      geoNearQuery.dateTime = { $gte: startOfDay, $lte: endOfDay };
       if (filters.timeWindow === 'morning') {
-        rideDateFilter.$gte = new Date(`${filters.searchDate}T05:00:00`);
-        rideDateFilter.$lte = new Date(`${filters.searchDate}T11:59:59`);
+        geoNearQuery.dateTime = {
+          $gte: new Date(`${filters.searchDate}T05:00:00`),
+          $lte: new Date(`${filters.searchDate}T11:59:59.999`),
+        };
       } else if (filters.timeWindow === 'afternoon') {
-        rideDateFilter.$gte = new Date(`${filters.searchDate}T12:00:00`);
-        rideDateFilter.$lte = new Date(`${filters.searchDate}T16:59:59`);
+        geoNearQuery.dateTime = {
+          $gte: new Date(`${filters.searchDate}T12:00:00`),
+          $lte: new Date(`${filters.searchDate}T16:59:59.999`),
+        };
       } else if (filters.timeWindow === 'evening') {
-        rideDateFilter.$gte = new Date(`${filters.searchDate}T17:00:00`);
-        rideDateFilter.$lte = new Date(`${filters.searchDate}T22:59:59`);
+        geoNearQuery.dateTime = {
+          $gte: new Date(`${filters.searchDate}T17:00:00`),
+          $lte: new Date(`${filters.searchDate}T22:59:59.999`),
+        };
       }
     }
   }
-
-  const geoNearQuery = {
-    driver: { $ne: userId },
-    dateTime: rideDateFilter,
-  };
 
   if (filters.vehicleType) {
     geoNearQuery.vehicleType = filters.vehicleType;
@@ -104,6 +160,20 @@ async function searchRidesForUser(userId, payload = {}) {
   if (filters.maxPrice > 0) {
     geoNearQuery.pricePerSeat = { $lte: filters.maxPrice };
   }
+  geoNearQuery.compatibilityScore = { $gte: Number(filters.minCompatibilityScore || 0) };
+
+  console.log('[ride-search] filters:', {
+    userId: String(userId),
+    vehicleType: filters.vehicleType,
+    genderPreference: filters.genderPreference,
+    minCompatibilityScore: filters.minCompatibilityScore,
+    maxPrice: filters.maxPrice,
+    searchDate: filters.searchDate,
+    timeWindow: filters.timeWindow,
+    nearDistanceMeters,
+    includeOwnRides: filters.includeOwnRides,
+    geoNearQuery,
+  });
 
   const nearbyByPickup = await Ride.aggregate([
     {
@@ -119,26 +189,40 @@ async function searchRidesForUser(userId, payload = {}) {
     { $sort: { pickupDistanceMeters: 1, dateTime: 1 } },
   ]);
 
-  const withDropDistance = nearbyByPickup
-    .map((ride) => {
-      const endCoords = ride.endLocation?.coordinates || ride.dropLocation?.coordinates;
-      if (!Array.isArray(endCoords) || endCoords.length !== 2) return null;
-      const endDistanceKm = haversineKm([endLongitude, endLatitude], endCoords);
-      return { ...ride, endDistanceKm };
-    })
-    .filter(Boolean)
-    .filter((ride) => ride.endDistanceKm <= nearDistanceMeters / 1000);
+  console.log('[ride-search] pickup matches:', nearbyByPickup.length);
 
-  const rideIds = withDropDistance.map((ride) => ride._id);
-  const rideDistanceMap = new Map(
-    withDropDistance.map((ride) => [
-      String(ride._id),
-      {
-        pickupDistanceKm: Number((Number(ride.pickupDistanceMeters || 0) / 1000).toFixed(2)),
-        endDistanceKm: Number(Number(ride.endDistanceKm || 0).toFixed(2)),
-      },
-    ])
-  );
+  let candidateRides = nearbyByPickup;
+  const usedGeoNearResults = nearbyByPickup.length > 0;
+  const rideDistanceMap = new Map();
+
+  for (const ride of nearbyByPickup) {
+    rideDistanceMap.set(String(ride._id), {
+      pickupDistanceKm: Number((Number(ride.pickupDistanceMeters || 0) / 1000).toFixed(2)),
+      endDistanceKm: 0,
+    });
+  }
+
+  if (!candidateRides.length) {
+    console.log('[ride-search] geoNear returned 0 rides, applying fallback query');
+    const fallbackRides = await Ride.find(geoNearQuery)
+      .select('_id startLocation dateTime')
+      .sort({ dateTime: 1 })
+      .lean();
+
+    candidateRides = fallbackRides.map((ride) => {
+      const pickupDistanceKm = haversineKm(
+        [startLongitude, startLatitude],
+        ride.startLocation?.coordinates || []
+      );
+      rideDistanceMap.set(String(ride._id), {
+        pickupDistanceKm: Number.isFinite(pickupDistanceKm) ? Number(pickupDistanceKm.toFixed(2)) : Infinity,
+        endDistanceKm: 0,
+      });
+      return ride;
+    });
+  }
+
+  const rideIds = candidateRides.map((ride) => ride._id);
 
   const rides = await Ride.find({ _id: { $in: rideIds } }).populate(
     'driver',
@@ -154,6 +238,23 @@ async function searchRidesForUser(userId, payload = {}) {
     .map((ride) => {
       const metrics = rideDistanceMap.get(String(ride._id)) || { pickupDistanceKm: 0, endDistanceKm: 0 };
       const routeOverlap = calculateRouteOverlap(passengerRoute, buildRoutePoints(ride));
+      const driverRoutePoints = buildRoutePoints(ride);
+      const pickupDeviationDistance = nearestDistanceKmToRoute([startLongitude, startLatitude], driverRoutePoints);
+      const dropDeviationDistance = nearestDistanceKmToRoute([endLongitude, endLatitude], driverRoutePoints);
+      const driverDirection = vectorFromPoints(
+        ride.startLocation?.coordinates || [0, 0],
+        ride.endLocation?.coordinates || [0, 0]
+      );
+      const riderDirection = vectorFromPoints(
+        [startLongitude, startLatitude],
+        [endLongitude, endLatitude]
+      );
+      const directionAngleDiff = angleBetweenVectorsDeg(driverDirection, riderDirection);
+      const sameDirection = directionAngleDiff < 45;
+      const overlapDistance = Number(routeOverlap.estimatedSharedDistanceKm || 0);
+      const detourDistance = Number(
+        Math.max(0, passengerDistanceKm - Number(routeOverlap.estimatedSharedDistanceKm || 0)).toFixed(2)
+      );
       const compatibility = calculateCompatibilityV2(requester, ride.driver, {
         routeOverlapScore: routeOverlap.overlapScore,
       });
@@ -166,6 +267,13 @@ async function searchRidesForUser(userId, payload = {}) {
       return {
         ...ride.toObject(),
         routeOverlap,
+        overlapPercentage: Number(routeOverlap.overlapPercent || 0),
+        pickupDeviationDistance: Number(pickupDeviationDistance.toFixed(2)),
+        dropDeviationDistance: Number(dropDeviationDistance.toFixed(2)),
+        directionAngleDiff: Number(directionAngleDiff.toFixed(2)),
+        sameDirection,
+        overlapDistance: Number(overlapDistance.toFixed(2)),
+        detourDistance,
         compatibility: compatibility.score,
         compatibilityReasons: compatibility.reasons,
         compatibilityBreakdown: compatibility.breakdown,
@@ -180,23 +288,28 @@ async function searchRidesForUser(userId, payload = {}) {
       };
     })
     .filter((ride) => {
-      if (filters.minCompatibilityScore && ride.compatibility < filters.minCompatibilityScore) return false;
-      if (
-        ride.genderPreference &&
-        ride.genderPreference !== 'any' &&
-        String(requester.gender || '') &&
-        String(ride.genderPreference) !== String(requester.gender)
-      ) {
-        return false;
-      }
+      const pickupOk = Number(ride.pickupDeviationDistance || Infinity) <= 20;
+      const dropCorridorOk = Number(ride.dropDeviationDistance || Infinity) <= 15;
+      const directionOk = Boolean(ride.sameDirection);
+      const overlapOk = Number(ride.overlapPercentage || 0) >= 30;
       if (
         filters.genderPreference &&
-        filters.genderPreference !== 'any' &&
+        String(filters.genderPreference).toLowerCase() !== 'any' &&
         String(ride.driver?.gender || '') !== String(filters.genderPreference)
       ) {
         return false;
       }
-      return true;
+
+      console.log('Ride:', String(ride._id));
+      console.log('Overlap %:', Number(ride.overlapPercentage || 0));
+      console.log('Pickup distance:', Number(ride.pickupDeviationDistance || 0));
+      console.log('Drop corridor distance:', Number(ride.dropDeviationDistance || 0));
+
+      if (!usedGeoNearResults) {
+        return overlapOk;
+      }
+
+      return pickupOk && dropCorridorOk && directionOk && overlapOk;
     })
     .sort((a, b) => {
       if ((a.searchMetrics?.startProximityKm || 0) !== (b.searchMetrics?.startProximityKm || 0)) {
@@ -219,11 +332,14 @@ async function searchRidesForUser(userId, payload = {}) {
     rideId: ride._id,
   }));
 
+  console.log('[ride-search] final rides:', withCompatibility.length);
+
   return { rides: withCompatibility, nearbyDrivers };
 }
 
 router.post('/', authMiddleware, async (req, res) => {
   try {
+    await expirePastRides();
     const {
       startLocation,
       endLocation,
@@ -234,6 +350,11 @@ router.post('/', authMiddleware, async (req, res) => {
       vehicleType,
       seatsAvailable,
       pricePerSeat,
+      fuelType = 'PETROL',
+      mileage = 15,
+      fuelPrice,
+      pricingMarginPercent = 5,
+      useSuggestedPrice = true,
       luggageAllowed = false,
       genderPreference = 'any',
       musicPreference = [],
@@ -256,6 +377,27 @@ router.post('/', authMiddleware, async (req, res) => {
     }
 
     const ride = await Ride.create({
+      ...(() => {
+        const normalizedDistance = Number(distanceKm || 0);
+        const normalizedMileage = Math.max(1, Number(mileage || 1));
+        const normalizedFuelPrice = Number(fuelPrice || DEFAULT_FUEL_PRICE[String(fuelType).toUpperCase()] || DEFAULT_FUEL_PRICE.PETROL);
+        const marginFactor = 1 + Math.max(0, Math.min(10, Number(pricingMarginPercent || 0))) / 100;
+        const normalizedSeats = Math.max(1, Number(seatsAvailable || 1));
+        const fuelCost = (normalizedDistance / normalizedMileage) * normalizedFuelPrice;
+        const suggestedPricePerSeat = Number(((fuelCost * marginFactor) / normalizedSeats).toFixed(2));
+        const finalPricePerSeat = useSuggestedPrice
+          ? suggestedPricePerSeat
+          : Number(pricePerSeat || suggestedPricePerSeat);
+
+        return {
+          fuelType: String(fuelType).toUpperCase(),
+          mileage: normalizedMileage,
+          fuelPrice: normalizedFuelPrice,
+          autoCalculatedPricePerSeat: suggestedPricePerSeat,
+          pricingMarginPercent: Math.max(0, Math.min(10, Number(pricingMarginPercent || 0))),
+          pricePerSeat: finalPricePerSeat,
+        };
+      })(),
       driver: req.user.id,
       startLocation,
       endLocation,
@@ -267,7 +409,7 @@ router.post('/', authMiddleware, async (req, res) => {
       dateTime: computedDateTime,
       vehicleType,
       seatsAvailable,
-      pricePerSeat,
+      status: Number(seatsAvailable) === 0 ? 'FULL' : 'ACTIVE',
       luggageAllowed,
       genderPreference,
       musicPreference,
@@ -293,12 +435,83 @@ router.post('/search', authMiddleware, rateLimitRideSearch, async (req, res) => 
   }
 });
 
+router.get('/my-posted', authMiddleware, async (req, res) => {
+  try {
+    await expirePastRides();
+    const rides = await Ride.find({ driver: req.user.id }).sort({ dateTime: -1 });
+    const updates = [];
+    for (const ride of rides) {
+      if (ride.seatsAvailable === 0 && ride.status === 'ACTIVE') {
+        ride.status = 'FULL';
+        updates.push(ride.save());
+      }
+    }
+    if (updates.length) await Promise.all(updates);
+    return res.json(rides);
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+router.patch('/:id/status', authMiddleware, async (req, res) => {
+  try {
+    const { status } = req.body;
+    const allowed = ['ACTIVE', 'FULL', 'COMPLETED', 'CANCELLED'];
+    if (!allowed.includes(status)) {
+      return res.status(400).json({ success: false, message: 'Invalid status' });
+    }
+
+    const ride = await Ride.findById(req.params.id);
+    if (!ride) return res.status(404).json({ success: false, message: 'Ride not found' });
+    if (String(ride.driver) !== String(req.user.id)) {
+      return res.status(403).json({ success: false, message: 'Only driver can update ride status' });
+    }
+
+    ride.status = status;
+    if (status === 'FULL') ride.seatsAvailable = 0;
+    if (status === 'ACTIVE' && ride.seatsAvailable === 0) ride.seatsAvailable = 1;
+    await ride.save();
+
+    return res.json(ride);
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 router.post('/search/proximity', authMiddleware, rateLimitRideSearch, async (req, res) => {
   try {
-    const result = await searchRidesForUser(req.user.id, req.body);
+    const appliedFilters = {
+      ...req.body,
+      includeOwnRides:
+        req.query.includeOwnRides ??
+        req.body.includeOwnRides ??
+        false,
+      maxDistanceMeters: req.query.maxDistanceMeters ?? req.body.maxDistanceMeters ?? 200000,
+      minCompatibility: req.query.minCompatibility ?? req.body.minCompatibility ?? req.body.minCompatibilityScore ?? 0,
+    };
+    console.log('User:', req.user._id || req.user.id);
+    console.log('Filters:', appliedFilters);
+
+    const result = await searchRidesForUser(req.user.id, appliedFilters);
     if (result.error) return res.status(result.error.status).json({ message: result.error.message });
+    console.log('Found rides:', (result.rides || []).length);
+    if (!result.rides?.length) {
+      return res.json({
+        success: true,
+        rides: [],
+        nearbyDrivers: [],
+        message: 'No rides match current filters',
+      });
+    }
+    const formattedRides = result.rides.map((ride) => ({
+      ride,
+      overlapPercentage: Number(ride.overlapPercentage || 0),
+      pickupDeviationDistance: Number(ride.pickupDeviationDistance || 0),
+      dropDeviationDistance: Number(ride.dropDeviationDistance || 0),
+    }));
     return res.json({
-      rides: result.rides,
+      success: true,
+      rides: formattedRides,
       nearbyDrivers: result.nearbyDrivers,
     });
   } catch (error) {
@@ -354,7 +567,7 @@ router.post('/:id/fare-split', authMiddleware, async (req, res) => {
   if (!ride) return res.status(404).json({ message: 'Ride not found' });
 
   const { totalFuelCost = ride.totalFuelCost || 0, tollCharges = ride.tollCharges || 0 } = req.body;
-  const acceptedCount = await Request.countDocuments({ ride: ride._id, status: 'accepted' });
+  const acceptedCount = await Request.countDocuments({ ride: ride._id, status: 'ACCEPTED' });
   const passengers = Math.max(1, acceptedCount + 1);
   const totalCost = Number(totalFuelCost) + Number(tollCharges);
 
@@ -366,7 +579,7 @@ router.post('/:id/fare-split', authMiddleware, async (req, res) => {
 });
 
 router.get('/heatmap/demand', authMiddleware, async (_req, res) => {
-  const pending = await Request.find({ status: 'pending' }).populate('ride', 'startLocation');
+  const pending = await Request.find({ status: 'PENDING' }).populate('ride', 'startLocation');
   const cells = new Map();
 
   for (const reqItem of pending) {

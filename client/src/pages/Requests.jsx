@@ -62,7 +62,7 @@ export default function Requests() {
                 {entry.rideStatus && <StatusBadge status={entry.rideStatus} />}
                 {entry.contact && <p>Contact: {entry.contact}</p>}
 
-                {entry.status === 'accepted' && entry.roomId && (
+                {String(entry.status || '').toUpperCase() === 'ACCEPTED' && entry.roomId && (
                   <div className="flex flex-wrap gap-2 mt-2 items-center">
                     <Link className="px-3 py-1 rounded-full bg-indigo-600 text-white" to={`/chat?roomId=${entry.roomId}`}>Open Chat</Link>
                     <Link className="px-3 py-1 rounded-full bg-cyan-600 text-white" to={`/live-ride?sessionId=${entry.sessionId}&role=${tab === 'received' ? 'driver' : 'passenger'}`}>Live Tracking</Link>
@@ -75,7 +75,7 @@ export default function Requests() {
                   </div>
                 )}
 
-                {tab === 'received' && entry.status === 'pending' && (
+                {tab === 'received' && String(entry.status || '').toUpperCase() === 'PENDING' && (
                   <div className="space-x-2 mt-3">
                     <button className="px-4 py-2 rounded-full bg-green-600 text-white" onClick={() => updateStatus(entry._id, 'accept')}>Accept</button>
                     <button className="px-4 py-2 rounded-full bg-red-600 text-white" onClick={() => updateStatus(entry._id, 'reject')}>Reject</button>

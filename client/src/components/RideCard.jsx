@@ -1,5 +1,4 @@
 import CompatibilityScore from './CompatibilityScore';
-import FareSplitCalculator from './FareSplitCalculator';
 import { MapContainer, Marker, Polyline, TileLayer } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -32,23 +31,21 @@ export default function RideCard({ ride, onRequest }) {
 
   return (
     <article className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-3">
-      <h3 className="text-2xl font-bold">{ride.startLocation.name} to {ride.endLocation.name}</h3>
-      <p className="text-slate-600">Driver: {ride.driver.name} Rating {ride.driverRating?.toFixed?.(1) || '0.0'}</p>
-      <p className="text-slate-600">Vehicle: {ride.vehicleType} | Seats: {ride.seatsAvailable}</p>
-      <p className="text-slate-600">
-        Date: {ride.date || (ride.dateTime ? new Date(ride.dateTime).toISOString().slice(0, 10) : '-')} | Time:{' '}
-        {ride.time || (ride.dateTime ? new Date(ride.dateTime).toISOString().slice(11, 16) : '-')}
-      </p>
-      <p className="text-slate-600">
-        Price/seat: {Number.isFinite(Number(ride.pricePerSeat)) ? `INR ${ride.pricePerSeat}` : '-'} | Luggage:{' '}
-        {ride.luggageAllowed ? 'Yes' : 'No'}
-      </p>
-      <p className="text-slate-600">
-        Music: {Array.isArray(ride.musicPreference) && ride.musicPreference.length ? ride.musicPreference.join(', ') : 'No preference'}
-      </p>
-      <p className="text-slate-600">
-        Route overlap: <b>{ride.routeOverlap?.overlapPercent || 0}%</b> | Shared ~
-        {ride.routeOverlap?.estimatedSharedDistanceKm || 0} km
+      <div className="flex items-start justify-between gap-3">
+        <h3 className="text-2xl font-bold">{ride.startLocation.name} to {ride.endLocation.name}</h3>
+        <span className="px-3 py-1 rounded-full bg-indigo-600 text-white text-sm font-semibold">
+          {Number.isFinite(Number(ride.pricePerSeat)) ? `INR ${ride.pricePerSeat}/seat` : 'Price NA'}
+        </span>
+      </div>
+
+      <p className="text-slate-600">Driver: {ride.driver.name} | Rating {ride.driverRating?.toFixed?.(1) || '0.0'}</p>
+      <p className="text-slate-600">Vehicle: {ride.vehicleType} | Seats available: {ride.seatsAvailable}</p>
+      <p className="text-slate-600">Distance: {ride.distanceKm ? `${ride.distanceKm} km` : '-'} | ETA: {ride.etaMinutes ? `${ride.etaMinutes} min` : '-'}</p>
+      <p className="text-slate-600">Route overlap: <b>{ride.routeOverlap?.overlapPercent || 0}%</b></p>
+      <p className="text-slate-600">Pickup deviation: {Number.isFinite(Number(ride.pickupDeviationDistance)) ? `${ride.pickupDeviationDistance} km` : '-'}</p>
+      <p className="text-slate-600">Drop deviation: {Number.isFinite(Number(ride.dropDeviationDistance)) ? `${ride.dropDeviationDistance} km` : '-'}</p>
+      <p className={`font-semibold ${Number(ride.compatibility || 0) > 60 ? 'text-emerald-600' : 'text-slate-600'}`}>
+        Compatibility: {Number(ride.compatibility || 0)}%
       </p>
 
       {hasMapPoints && (
@@ -74,7 +71,6 @@ export default function RideCard({ ride, onRequest }) {
           Send Request
         </button>
       </div>
-      <FareSplitCalculator rideId={ride._id} />
     </article>
   );
 }

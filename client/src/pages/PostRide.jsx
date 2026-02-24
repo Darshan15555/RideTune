@@ -4,9 +4,11 @@ import api from '../services/api';
 import LocationPicker from '../components/LocationPicker';
 
 const VEHICLE_OPTIONS = ['Car', 'Bike', 'SUV'];
+const FUEL_OPTIONS = ['PETROL', 'DIESEL', 'EV'];
 const SEAT_OPTIONS = [1, 2, 3, 4, 5, 6];
 const MUSIC_OPTIONS = ['Pop', 'Classical', 'Bollywood', 'Rock', 'Jazz', 'Hip Hop', 'EDM', 'No Preference'];
 const PRICE_PER_KM_BY_VEHICLE = { Bike: 8, Car: 12, SUV: 16 };
+const DEFAULT_FUEL_PRICE = { PETROL: 102, DIESEL: 90, EV: 12 };
 
 function isValidLatLng(location) {
   return Number.isFinite(Number(location?.lat)) && Number.isFinite(Number(location?.lng));
@@ -43,6 +45,11 @@ export default function PostRide() {
     date: '',
     time: '',
     vehicleType: 'Car',
+    fuelType: 'PETROL',
+    mileage: '15',
+    fuelPrice: String(DEFAULT_FUEL_PRICE.PETROL),
+    pricingMarginPercent: '5',
+    useSuggestedPrice: true,
     seatsAvailable: '1',
     luggageAllowed: true,
     pricePerSeat: '',
@@ -59,9 +66,22 @@ export default function PostRide() {
     const perKm = PRICE_PER_KM_BY_VEHICLE[form.vehicleType] || PRICE_PER_KM_BY_VEHICLE.Car;
     return Number((distanceKm * perKm).toFixed(0));
   }, [distanceKm, form.vehicleType]);
+  const suggestedPricePerSeat = useMemo(() => {
+    if (!distanceKm) return 0;
+    const mileage = Math.max(1, Number(form.mileage || 1));
+    const fuelPrice = Math.max(0, Number(form.fuelPrice || 0));
+    const seats = Math.max(1, Number(form.seatsAvailable || 1));
+    const margin = 1 + Math.max(0, Math.min(10, Number(form.pricingMarginPercent || 0))) / 100;
+    const fuelCost = (distanceKm / mileage) * fuelPrice;
+    return Number(((fuelCost * margin) / seats).toFixed(2));
+  }, [distanceKm, form.mileage, form.fuelPrice, form.seatsAvailable, form.pricingMarginPercent]);
 
   const canPost = Boolean(
-    hasCoordinates && form.date && form.time && Number(form.pricePerSeat) > 0 && !submitting
+    hasCoordinates &&
+      form.date &&
+      form.time &&
+      (form.useSuggestedPrice || Number(form.pricePerSeat) > 0) &&
+      !submitting
   );
 
   const toggleMusicPreference = (genre) => {
@@ -77,8 +97,8 @@ export default function PostRide() {
   };
 
   const autoCalculatePrice = () => {
-    if (!estimatedFare) return;
-    setForm((prev) => ({ ...prev, pricePerSeat: String(estimatedFare) }));
+    if (!suggestedPricePerSeat) return;
+    setForm((prev) => ({ ...prev, pricePerSeat: String(suggestedPricePerSeat) }));
   };
 
   const submit = async (event) => {
@@ -105,6 +125,12 @@ export default function PostRide() {
         time: form.time,
         dateTime: `${form.date}T${form.time}`,
         vehicleType: form.vehicleType,
+        fuelType: form.fuelType,
+        mileage: Number(form.mileage),
+        fuelPrice: Number(form.fuelPrice),
+        pricingMarginPercent: Number(form.pricingMarginPercent),
+        useSuggestedPrice: Boolean(form.useSuggestedPrice),
+        autoCalculatedPricePerSeat: Number(suggestedPricePerSeat || 0),
         seatsAvailable: Number(form.seatsAvailable),
         pricePerSeat: Number(form.pricePerSeat),
         luggageAllowed: Boolean(form.luggageAllowed),
@@ -196,6 +222,26 @@ export default function PostRide() {
               </select>
             </div>
             <div className="space-y-1">
+              <label className="text-sm font-semibold text-slate-700">Fuel type</label>
+              <select
+                className="soft-input"
+                value={form.fuelType}
+                onChange={(e) =>
+                  setForm((prev) => ({
+                    ...prev,
+                    fuelType: e.target.value,
+                    fuelPrice: String(DEFAULT_FUEL_PRICE[e.target.value] || prev.fuelPrice),
+                  }))
+                }
+              >
+                {FUEL_OPTIONS.map((fuel) => (
+                  <option key={fuel} value={fuel}>
+                    {fuel}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1">
               <label className="text-sm font-semibold text-slate-700">Available seats</label>
               <select
                 className="soft-input"
@@ -220,6 +266,40 @@ export default function PostRide() {
                 <option value="no">No</option>
               </select>
             </div>
+            <div className="space-y-1">
+              <label className="text-sm font-semibold text-slate-700">Mileage (km per liter)</label>
+              <input
+                className="soft-input"
+                type="number"
+                min="1"
+                step="0.1"
+                value={form.mileage}
+                onChange={(e) => setForm((prev) => ({ ...prev, mileage: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm font-semibold text-slate-700">Fuel price</label>
+              <input
+                className="soft-input"
+                type="number"
+                min="0"
+                step="0.1"
+                value={form.fuelPrice}
+                onChange={(e) => setForm((prev) => ({ ...prev, fuelPrice: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm font-semibold text-slate-700">Margin % (0-10)</label>
+              <input
+                className="soft-input"
+                type="number"
+                min="0"
+                max="10"
+                step="1"
+                value={form.pricingMarginPercent}
+                onChange={(e) => setForm((prev) => ({ ...prev, pricingMarginPercent: e.target.value }))}
+              />
+            </div>
           </div>
         </section>
 
@@ -236,7 +316,8 @@ export default function PostRide() {
                 placeholder="Enter fare per seat"
                 value={form.pricePerSeat}
                 onChange={(e) => setForm((prev) => ({ ...prev, pricePerSeat: e.target.value }))}
-                required
+                required={!form.useSuggestedPrice}
+                disabled={form.useSuggestedPrice}
               />
             </div>
             <button
@@ -245,8 +326,19 @@ export default function PostRide() {
               className="px-4 py-2 rounded-full border border-slate-300 bg-slate-50 hover:bg-slate-100"
               disabled={!distanceKm}
             >
-              Auto-calculate from distance
+              Suggest from fuel cost
             </button>
+            <div className="md:col-span-2 flex items-center gap-3">
+              <input
+                id="useSuggestedPrice"
+                type="checkbox"
+                checked={form.useSuggestedPrice}
+                onChange={(e) => setForm((prev) => ({ ...prev, useSuggestedPrice: e.target.checked }))}
+              />
+              <label htmlFor="useSuggestedPrice" className="text-sm text-slate-700">
+                Use system suggested price (INR {suggestedPricePerSeat || 0}/seat)
+              </label>
+            </div>
           </div>
         </section>
 
@@ -310,6 +402,7 @@ export default function PostRide() {
           <p>{(startLocation.formattedAddress || 'Pickup')} to {(endLocation.formattedAddress || 'Drop')}</p>
           <p>Distance: {distanceKm ? `${distanceKm} km` : '-'}</p>
           <p>ETA: {etaMinutes ? `${etaMinutes} min` : '-'}</p>
+          <p>Suggested fuel-based price/seat: {suggestedPricePerSeat ? `INR ${suggestedPricePerSeat}` : '-'}</p>
           <p>Estimated fare per seat: {estimatedFare ? `INR ${estimatedFare}` : '-'}</p>
         </section>
 

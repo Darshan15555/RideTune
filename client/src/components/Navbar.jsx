@@ -30,6 +30,22 @@ export default function Navbar() {
         <Brand />
         <div className="flex items-center gap-4">
           {user && (
+            <>
+              <Link
+                to="/my-rides"
+                className="px-4 py-2 rounded-full border border-slate-300 bg-white hover:bg-slate-100 font-semibold"
+              >
+                My Rides
+              </Link>
+              <Link
+                to="/my-requests"
+                className="px-4 py-2 rounded-full border border-slate-300 bg-white hover:bg-slate-100 font-semibold"
+              >
+                My Requests
+              </Link>
+            </>
+          )}
+          {user && (
             <Link
               to="/profile"
               className="px-4 py-2 rounded-full border border-slate-300 bg-white hover:bg-slate-100 font-semibold"

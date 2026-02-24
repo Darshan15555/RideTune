@@ -12,6 +12,8 @@ import Requests from './pages/Requests';
 import LiveRide from './pages/LiveRide';
 import ChatPage from './pages/ChatPage';
 import History from './pages/History';
+import MyRides from './pages/MyRides';
+import MyRequests from './pages/MyRequests';
 import ProfileForm from './components/ProfileForm';
 import ProfileView from './components/ProfileView';
 
@@ -76,6 +78,8 @@ export default function App() {
         <Route path="/dashboard" element={<PrivateRoute><RequireProfile><Dashboard /></RequireProfile></PrivateRoute>} />
         <Route path="/post-ride" element={<PrivateRoute><RequireProfile><PostRide /></RequireProfile></PrivateRoute>} />
         <Route path="/search-ride" element={<PrivateRoute><RequireProfile><SearchRide /></RequireProfile></PrivateRoute>} />
+        <Route path="/my-rides" element={<PrivateRoute><RequireProfile><MyRides /></RequireProfile></PrivateRoute>} />
+        <Route path="/my-requests" element={<PrivateRoute><RequireProfile><MyRequests /></RequireProfile></PrivateRoute>} />
         <Route path="/requests" element={<PrivateRoute><RequireProfile><Requests /></RequireProfile></PrivateRoute>} />
         <Route path="/live-ride" element={<PrivateRoute><RequireProfile><LiveRide /></RequireProfile></PrivateRoute>} />
         <Route path="/chat" element={<PrivateRoute><RequireProfile><ChatPage /></RequireProfile></PrivateRoute>} />

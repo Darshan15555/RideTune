@@ -6,7 +6,10 @@ export default function NotificationBell() {
   const [items, setItems] = useState([]);
   const [open, setOpen] = useState(false);
 
-  const unreadCount = useMemo(() => items.filter((item) => !item.read).length, [items]);
+  const unreadCount = useMemo(
+    () => items.filter((item) => !(item.isRead ?? item.read ?? false)).length,
+    [items]
+  );
 
   const load = async () => {
     const { data } = await api.get('/notifications');
@@ -27,8 +30,8 @@ export default function NotificationBell() {
   }, []);
 
   const markRead = async (id) => {
-    await api.put(`/notifications/${id}/read`);
-    setItems((prev) => prev.map((item) => (item._id === id ? { ...item, read: true } : item)));
+    await api.patch(`/notifications/${id}/read`);
+    setItems((prev) => prev.map((item) => (item._id === id ? { ...item, isRead: true } : item)));
   };
 
   return (
@@ -43,7 +46,11 @@ export default function NotificationBell() {
             <div key={item._id} className="border rounded-lg p-2">
               <p className="text-sm capitalize text-slate-500">{item.type}</p>
               <p>{item.message}</p>
-              {!item.read && <button className="text-indigo-600 text-sm" onClick={() => markRead(item._id)}>Mark as read</button>}
+              {!(item.isRead ?? item.read ?? false) && (
+                <button className="text-indigo-600 text-sm" onClick={() => markRead(item._id)}>
+                  Mark as read
+                </button>
+              )}
             </div>
           ))}
         </div>

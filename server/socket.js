@@ -31,8 +31,15 @@ function scheduleLocationFlush(sessionId) {
   locationFlushTimers.set(sessionId, timer);
 }
 
-async function createAndEmitNotification(io, userId, type, message) {
-  const notification = await Notification.create({ user: userId, type, message });
+async function createAndEmitNotification(io, userId, type, message, meta = {}) {
+  const notification = await Notification.create({
+    user: userId,
+    type,
+    message,
+    ride: meta.ride || null,
+    fromUser: meta.fromUser || null,
+    isRead: false,
+  });
   io.to(`user:${String(userId)}`).emit('new-notification', notification);
 }
 
@@ -251,7 +258,10 @@ export function initSocket(server) {
       io.to(roomId).emit('receive-message', messagePayload);
 
       const receiverId = String(session.driver) === socket.user.id ? session.passenger : session.driver;
-      await createAndEmitNotification(io, receiverId, 'message', 'You have a new message.');
+      await createAndEmitNotification(io, receiverId, 'MESSAGE', 'You have a new message.', {
+        ride: session.ride,
+        fromUser: socket.user.id,
+      });
     });
 
     socket.on('message-read', async ({ roomId, messageId }) => {

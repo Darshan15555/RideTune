@@ -141,12 +141,15 @@ export default function SearchRide() {
       };
 
       const { data } = await api.post('/rides/search/proximity', payload);
-      setRides(data.rides || []);
+      const normalizedRides = Array.isArray(data?.rides)
+        ? data.rides.map((entry) => entry?.ride || entry).filter(Boolean)
+        : [];
+      setRides(normalizedRides);
       if (Array.isArray(data.nearbyDrivers)) {
         setNearbyDrivers(data.nearbyDrivers);
       }
 
-      if (!data?.rides?.length) {
+      if (!normalizedRides.length) {
         setError('No rides found for your selected filters.');
       }
     } catch (searchError) {
