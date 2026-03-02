@@ -26,3 +26,27 @@
     @apply w-full rounded-full border border-slate-300 bg-slate-50 px-5 py-3 text-slate-700 outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-100;
   }
 }
+
+.dark body { background: #0b1220; color: #e2e8f0; }
+.dark .glass-card, .dark .bg-white { background-color: #0f172a !important; color: #e2e8f0; }
+.dark .border { border-color: #334155 !important; }
+
+/* Keep Google Places suggestions above map/cards */
+.pac-container {
+  z-index: 9999 !important;
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.15);
+  margin-top: 6px;
+  overflow: hidden;
+}
+
+.pac-item {
+  padding: 10px 12px;
+  font-size: 14px;
+}
+
+.pac-item:hover {
+  background: #eff6ff;
+}
+
